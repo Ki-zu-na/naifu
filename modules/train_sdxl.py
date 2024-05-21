@@ -161,6 +161,13 @@ class SupervisedFineTune(StableDiffusionModel):
             if min_snr_gamma:
                 loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
                 
+            # add debiased estimation loss
+            # --------------
+            snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
+            snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
+            weight = 1 / torch.sqrt(snr_t)
+            loss = weight * loss
+            # --------------
             loss = loss.mean()  # mean over batch dimension
         else:
             loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
