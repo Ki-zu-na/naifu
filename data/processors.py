@@ -43,7 +43,7 @@ def shuffle_prompts_sdstyle(e: Entry):
     # constrants
     shuffle_caption = True
     token_warmup_step = 0 # unsupported
-    caption_tag_dropout_rate = 0
+    caption_tag_dropout_rate = 0.15
     caption_separator = ","
     keep_tokens_separator = "|||"
     replacements = {}
@@ -75,3 +75,45 @@ def shuffle_prompts_sdstyle(e: Entry):
     
     e.prompt = caption
     return e
+
+def shuffle_prompts_dan_native_style(data_entry: dict, dan_probability: float = 0.7):
+    """
+    Process a data entry and return an Entry object with either 'dan' or 'native' caption.
+    
+    Args:
+    data_entry (dict): The input data entry.
+    dan_probability (float): Probability of choosing 'dan' caption. Default is 0.7.
+    
+    Returns:
+    Entry: Processed Entry object.
+    """
+    # Check if the data entry has the required fields
+    if not all(key in data_entry for key in ['train_use', 'train_caption_dan', 'train_caption_native', 'file_path', 'train_width', 'train_height']):
+        raise ValueError("Invalid data entry format")
+    
+    # Randomly choose between 'dan' and 'native' based on probability
+    use_dan = random.random() < dan_probability
+    
+    # Create an Entry object
+    entry = Entry(
+        is_latent=True,  # Assuming it's latent by default
+        pixel=torch.zeros((3, data_entry['train_height'], data_entry['train_width'])),  # Placeholder tensor
+        prompt=data_entry['train_caption_dan'] if use_dan else data_entry['train_caption_native'],
+        extras={
+            'file_path': data_entry['file_path'],
+            'train_width': data_entry['train_width'],
+            'train_height': data_entry['train_height'],
+            'caption_type': 'dan' if use_dan else 'native'
+        }
+    )
+    
+    # Apply shuffle_prompts_sdstyle
+    shuffled_entry = shuffle_prompts_sdstyle(entry)
+    
+    # Create a new Entry object with the shuffled prompt, keeping other attributes unchanged
+    return Entry(
+        is_latent=entry.is_latent,
+        pixel=entry.pixel,
+        prompt=shuffled_entry.prompt,
+        extras=entry.extras
+    )
