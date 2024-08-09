@@ -14,7 +14,7 @@ from typing import Callable, Generator, Optional  # type: ignore
 from torchvision import transforms
 from common.logging import logger
 
-from processors import shuffle_prompts_dan_native_style
+from data.processors import shuffle_prompts_dan_native_style
 from functools import partial
 
 json_lib = json
