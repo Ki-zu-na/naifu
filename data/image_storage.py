@@ -14,6 +14,9 @@ from typing import Callable, Generator, Optional  # type: ignore
 from torchvision import transforms
 from common.logging import logger
 
+from processors import shuffle_prompts_dan_native_style
+from functools import partial
+
 json_lib = json
 try:
     import rapidjson as json_lib
@@ -266,11 +269,19 @@ class LatentStore(StoreBase):
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
 
+        # 设置 dan_probability，可以从 kwargs 中获取或使用默认值
+        dan_probability = kwargs.get('dan_probability', 0.7)
+        
+        # 创建一个偏函数，固定 dan_probability 参数
+        self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
+
+
     def setup_filehandles(self):
         self.h5_filehandles = {}
         for h5_path in self.h5_paths:
             self.h5_filehandles[h5_path] = h5.File(h5_path, "r", libver="latest")
 
+    
     def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, (int, int)]:
         if len(self.h5_filehandles) == 0:
             self.setup_filehandles()
@@ -278,17 +289,25 @@ class LatentStore(StoreBase):
         latent_key = self.keys[index]
         h5_path, entry, original_size = self.h5_keymap[latent_key]
         
-        # modify here if you want to use a different format
-        prompt = entry["train_caption"]
+    #     # modify here if you want to use a different format
+    #     prompt = entry["train_caption"]
+
+        # 使用 shuffle_prompts_dan_native_style 函数处理 entry
+        processed_entry = self.process_entry(entry)
+        prompt = processed_entry.prompt
+
         latent = torch.asarray(self.h5_filehandles[h5_path][latent_key][:]).float()
         dhdw = self.h5_filehandles[h5_path][latent_key].attrs.get("dhdw", (0, 0))
-    
+
         # if scaled, we need to unscale the latent (training process will scale it back)
         scaled = self.h5_filehandles[h5_path][latent_key].attrs.get("scale", True)
         if scaled:
             latent = 1.0 / self.scale_factor * latent
 
         extras = self.get_batch_extras(self.paths[index])
+
+        extras.update(processed_entry.extras)  # 合并处理后的 extras
+
         return True, latent, prompt, original_size, dhdw, extras
 
 
