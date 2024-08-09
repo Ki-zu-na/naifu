@@ -305,9 +305,6 @@ class LatentStore(StoreBase):
             latent = 1.0 / self.scale_factor * latent
 
         extras = self.get_batch_extras(self.paths[index])
-
-        extras.update(processed_entry.extras)  # 合并处理后的 extras
-
         return True, latent, prompt, original_size, dhdw, extras
 
 
