@@ -94,7 +94,6 @@ def shuffle_prompts_dan_native_style(data_entry: dict, dan_probability: float = 
     # Randomly choose between 'dan' and 'native' based on probability
     use_dan = random.random() < dan_probability
     
-    # Create an Entry object
     entry = Entry(
         is_latent=True,  # Assuming it's latent by default
         pixel=torch.zeros((3, data_entry['train_height'], data_entry['train_width'])),  # Placeholder tensor
