@@ -176,7 +176,7 @@ class StoreBase(Dataset):
         raise NotImplementedError
 
     def get_batch_extras(self, path):
-        return None
+        return {}
 
     def process_batch(self, inputs: Entry):
         if isinstance(self.process_batch_fn, str):
@@ -282,19 +282,15 @@ class LatentStore(StoreBase):
             self.h5_filehandles[h5_path] = h5.File(h5_path, "r", libver="latest")
 
     
-    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, (int, int)]:
+    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         if len(self.h5_filehandles) == 0:
             self.setup_filehandles()
             
         latent_key = self.keys[index]
         h5_path, entry, original_size = self.h5_keymap[latent_key]
         
-    #     # modify here if you want to use a different format
-    #     prompt = entry["train_caption"]
-
-        # 使用 shuffle_prompts_dan_native_style 函数处理 entry
-        processed_entry = self.process_entry(entry)
-        prompt = processed_entry.prompt
+        # 获取原始 prompt
+        prompt = entry["train_caption"]
 
         latent = torch.asarray(self.h5_filehandles[h5_path][latent_key][:]).float()
         dhdw = self.h5_filehandles[h5_path][latent_key].attrs.get("dhdw", (0, 0))
@@ -304,7 +300,13 @@ class LatentStore(StoreBase):
         if scaled:
             latent = 1.0 / self.scale_factor * latent
 
+        # 获取额外信息
         extras = self.get_batch_extras(self.paths[index])
+        
+        # 添加必要的信息到 extras
+        extras['train_caption_dan'] = entry.get('train_caption_dan', prompt)
+        extras['train_caption_native'] = entry.get('train_caption_native', prompt)
+
         return True, latent, prompt, original_size, dhdw, extras
 
 
@@ -360,7 +362,7 @@ class DirectoryImageStore(StoreBase):
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
 
-    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, (int, int)]:
+    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         p = self.paths[index]
         prompt = self.prompts[index]
         _img = Image.open(p)
@@ -368,8 +370,8 @@ class DirectoryImageStore(StoreBase):
             img = np.array(_img)
         elif _img.mode == "RGBA":
             # transparent images
-            baimg = Image.new('RGB', img.size, (255, 255, 255))
-            baimg.paste(img, (0, 0), img)
+            baimg = Image.new('RGB', _img.size, (255, 255, 255))
+            baimg.paste(_img, (0, 0), _img)
             img = np.array(baimg)
         else:
             img = np.array(_img.convert("RGB"))
@@ -377,5 +379,12 @@ class DirectoryImageStore(StoreBase):
         img = self.transforms(img)
         h, w = img.shape[-2:]
         dhdw = (0, 0)
+        
+        # 获取额外信息
         extras = self.get_batch_extras(p)
+        
+        # 添加必要的信息到 extras
+        extras['train_caption_dan'] = extras.get('train_caption_dan', prompt)
+        extras['train_caption_native'] = extras.get('train_caption_native', prompt)
+
         return False, img, prompt, (h, w), dhdw, extras

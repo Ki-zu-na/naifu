@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import torch
 import random
-
+from typing import  Optional
 
 @dataclass
 class Entry:
@@ -18,8 +18,11 @@ class Entry:
     is_latent: bool
     pixel: torch.Tensor
     prompt: str
+    original_size: tuple[int, int]  # h, w
+    cropped_size: Optional[tuple[int, int]]  # h, w
+    dhdw: Optional[tuple[int, int]]  # dh, dw
     extras: dict = None
-
+    # mask: torch.Tensor | None = None
 
 def identical(inputs: Entry):
     return inputs
@@ -76,44 +79,41 @@ def shuffle_prompts_sdstyle(e: Entry):
     e.prompt = caption
     return e
 
-def shuffle_prompts_dan_native_style(data_entry: dict, dan_probability: float = 0.7):
+def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float = 0.7):
     """
-    Process a data entry and return an Entry object with either 'dan' or 'native' caption.
+    Process an Entry object and return a new Entry object with either 'dan' or 'native' caption.
     
     Args:
-    data_entry (dict): The input data entry.
+    data_entry (Entry): The input Entry object.
     dan_probability (float): Probability of choosing 'dan' caption. Default is 0.7.
     
     Returns:
-    Entry: Processed Entry object.
+    Entry: Processed Entry object with updated prompt and extras.
     """
-    # Check if the data entry has the required fields
-    if not all(key in data_entry for key in ['train_use', 'train_caption_dan', 'train_caption_native', 'file_path', 'train_width', 'train_height']):
-        raise ValueError("Invalid data entry format")
+    # Check if the data entry has the required fields in extras
+    if not data_entry.extras or 'train_caption_dan' not in data_entry.extras or 'train_caption_native' not in data_entry.extras:
+        raise ValueError("Missing 'train_caption_dan' or 'train_caption_native' in extras")
     
     # Randomly choose between 'dan' and 'native' based on probability
     use_dan = random.random() < dan_probability
     
-    # Create an Entry object
-    entry = Entry(
-        is_latent=True,  # Assuming it's latent by default
-        pixel=torch.zeros((3, data_entry['train_height'], data_entry['train_width'])),  # Placeholder tensor
-        prompt=data_entry['train_caption_dan'] if use_dan else data_entry['train_caption_native'],
-        extras={
-            'file_path': data_entry['file_path'],
-            'train_width': data_entry['train_width'],
-            'train_height': data_entry['train_height'],
-            'caption_type': 'dan' if use_dan else 'native'
-        }
+    # Choose the prompt
+    new_prompt = data_entry.extras['train_caption_dan'] if use_dan else data_entry.extras['train_caption_native']
+    
+    # Create a new extras dictionary with the added caption_type
+    new_extras = data_entry.extras.copy()
+    new_extras['caption_type'] = 'dan' if use_dan else 'native'
+    
+    # Create a new Entry object, inheriting most attributes from the original
+    new_entry = Entry(
+        is_latent=data_entry.is_latent,
+        pixel=data_entry.pixel,
+        prompt=new_prompt,
+        original_size=data_entry.original_size,
+        cropped_size=data_entry.cropped_size,
+        dhdw=data_entry.dhdw,
+        extras=new_extras
     )
     
-    # Apply shuffle_prompts_sdstyle
-    shuffled_entry = shuffle_prompts_sdstyle(entry)
-    
-    # Create a new Entry object with the shuffled prompt, keeping other attributes unchanged
-    return Entry(
-        is_latent=entry.is_latent,
-        pixel=entry.pixel,
-        prompt=shuffled_entry.prompt,
-        extras=entry.extras
-    )
+    # Apply shuffle_prompts_sdstyle (assuming this function exists)
+    return shuffle_prompts_sdstyle(new_entry)

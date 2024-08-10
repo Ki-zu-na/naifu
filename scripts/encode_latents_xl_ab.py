@@ -19,6 +19,21 @@ from diffusers import AutoencoderKL
 from torch.utils.data import DataLoader, Dataset
 from typing import Callable, Generator, Optional
 
+@dataclass
+class Entry:
+    """
+    This class represents an entry in a batch of image data. Each entry contains information about an image and its associated prompt.
+
+    Attributes:
+        is_latent (bool): A flag indicating whether the image is in latent space.
+        pixel (torch.Tensor): The pixel data of the image.
+        prompt (str): The prompt associated with the image.
+        extras (dict): A dictionary to store any extra information associated with the image.
+    """
+    is_latent: bool
+    pixel: torch.Tensor
+    prompt: str
+    extras: dict = None
 
 def load_entry(p: Path, json_data: dict):
     _img = Image.open(p)
@@ -50,12 +65,6 @@ image_suffix = set([".jpg", ".jpeg", ".png", ".PNG", ".gif", ".bmp", ".tiff", ".
 
 def is_img(path: Path):
     return path.suffix in image_suffix
-
-
-@dataclass
-class Entry:
-    is_latent: bool
-    pixel: torch.Tensor
 
 
 def dirwalk(path: Path, cond: Optional[Callable] = None) -> Generator[Path, None, None]:
@@ -119,7 +128,7 @@ class LatentEncodingDataset(Dataset):
         if no_upscale:
             self.fit_bucket_func = self.fit_bucket_no_upscale
 
-        self.target_area = 1280 * 1280
+        self.target_area = 1024 * 1024
         self.max_size, self.min_size, self.divisible = 4096, 256, 64
         self.generate_buckets()
         self.assign_buckets()
@@ -219,17 +228,27 @@ class LatentEncodingDataset(Dataset):
         return img, (dh, dw)
 
     # 在 __getitem__ 方法中修改返回值
-    def __getitem__(self, index) -> tuple[list[torch.Tensor], str, str, str, str, (int, int)]:
+    def __getitem__(self, index) -> Entry:
         try:
             img, prompt_dan, prompt_native = load_entry(self.paths[index], self.json_data)
             original_size = img.shape[:2]
             img, dhdw = self.fit_bucket_func(index, img) 
             img = self.tr(img).to(self.dtype)
             sha1 = get_sha1(self.paths[index])
+            
+            extras = {
+                "path": str(self.paths[index]),
+                "train_caption_dan": prompt_dan,
+                "train_caption_native": prompt_native,
+                "sha1": sha1,
+                "original_size": original_size,
+                "dhdw": dhdw
+            }
+            
+            return Entry(is_latent=False, pixel=img, prompt=prompt_dan, extras=extras)
         except Exception as e:
             print(f"\033[31mError processing {self.paths[index]}: {e}\033[0m")
-            return None, self.paths[index], None, None, None, None, None
-        return img, self.paths[index], prompt_dan, prompt_native, sha1, original_size, dhdw
+            return None
 
     def __len__(self):
         return len(self.paths)
@@ -272,28 +291,33 @@ if __name__ == "__main__":
     print(f"Saving cache to {h5_cache_file}")
     file_mode = "w" if not h5_cache_file.exists() else "r+"
 
-
     with h5.File(h5_cache_file, file_mode, libver="latest") as f:
         with torch.no_grad():
-            for img, basepath, prompt_dan, prompt_native, sha1, original_size, dhdw in tqdm(dataloader):
-                if sha1 is None:
-                    print(f"\033[33mWarning: {basepath} is invalid. Skipping... \033[0m")
+            for entry in tqdm(dataloader):
+                if entry is None:
                     continue
 
-                h, w = original_size
+                sha1 = entry.extras['sha1']
+                w, h = entry.extras['original_size']
+                
                 dataset_mapping[sha1] = {
                     "train_use": True,
-                    "train_caption_dan": prompt_dan,
-                    "train_caption_native": prompt_native,
-                    "file_path": str(basepath),
+                    "train_caption": entry.extras['train_caption_dan'],
+                    "file_path": entry.extras['path'],
                     "train_width": w,
                     "train_height": h,
+                    "extra": {
+                        "train_caption_dan": entry.extras['train_caption_dan'],
+                        "train_caption_native": entry.extras['train_caption_native'],
+                        "dhdw": entry.extras['dhdw']
+                    }
                 }
+                
                 if f"{sha1}.latents" in f:
-                    print(f"\033[33mWarning: {str(basepath)} is already cached. Skipping... \033[0m")
+                    print(f"\033[33mWarning: {entry.extras['path']} is already cached. Skipping... \033[0m")
                     continue
 
-                img = img.unsqueeze(0).cuda()
+                img = entry.pixel.unsqueeze(0).cuda()
                 latent = vae.encode(img, return_dict=False)[0]
                 latent.deterministic = True
                 latent = latent.sample()[0]
@@ -303,7 +327,7 @@ if __name__ == "__main__":
                     compression="gzip",
                 )
                 d.attrs["scale"] = False
-                d.attrs["dhdw"] = dhdw
+                d.attrs["dhdw"] = entry.extras['dhdw']
 
     with open(opt / "dataset.json", "w") as f:
         json.dump(dataset_mapping, f, indent=4)
