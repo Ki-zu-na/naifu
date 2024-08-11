@@ -234,7 +234,6 @@ class Trainer:
                 
             logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
 
-            del remainder
             del sd
             torch.cuda.empty_cache()
             gc.collect()
