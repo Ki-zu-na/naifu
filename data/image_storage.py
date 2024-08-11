@@ -244,7 +244,7 @@ class LatentStore(StoreBase):
             for k in fs.keys():
                 hashkey = k[:-8]  # ".latents"
                 if hashkey not in prompt_mapping:
-                    logger.warning(f"Key {k} not found in prompt_mapping")
+                    #logger.warning(f"Key {k} not found in prompt_mapping")
                     continue
                 
                 it = prompt_mapping[hashkey]
