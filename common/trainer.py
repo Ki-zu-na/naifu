@@ -1,4 +1,5 @@
 import os
+import gc
 import time
 
 import torch
@@ -232,6 +233,12 @@ class Trainer:
                         self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
                 
             logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+
+            del remainder
+            del sd
+            torch.cuda.empty_cache()
+            gc.collect()
+            torch.cuda.memory_summary(device=None, abbreviated=False)
         else:
             logger.info(f"Starting training from epoch {self.current_epoch}")
 
