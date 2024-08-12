@@ -296,7 +296,7 @@ class Trainer:
                     "train/epoch_avg_loss": loss_rec.avg,
                     "epoch": self.current_epoch
                 }
-                stat_str = f"train_loss: {loss:.3f}, avg_loss: {loss_rec.aavg:.3f}"
+                stat_str = f"train_loss: {loss:.3f}, avg_loss: {loss_rec.avg:.3f}"
                 progress.update(desc, local_acc_step, status=stat_str)
                     
                 # skip here if we are accumulating
