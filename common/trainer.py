@@ -257,6 +257,8 @@ class Trainer:
         resume_epoch = self.global_step // steps_per_epoch
         resume_step = self.global_step % steps_per_epoch
         while not should_stop:
+            # This is the beginning of each epoch
+            loss_rec.reset()  
             desc = f"Epoch {self.current_epoch}"
             progress.update(desc, 0)
             torch.cuda.empty_cache()
@@ -287,9 +289,14 @@ class Trainer:
                 loss_rec.add(epoch=self.current_epoch, step=batch_idx, loss=loss)
                 metrics = {
                     "train/loss": loss,
+                    "train/avg_loss": loss_rec.avg,
                     "trainer/step_t": time.perf_counter() - local_timer,
                 }
-                stat_str = f"train_loss: {loss:.3f}, avg_loss: {loss_rec.avg:.3f}"
+                epoch_metrics = {
+                    "train/epoch_avg_loss": loss_rec.avg,
+                    "epoch": self.current_epoch
+                }
+                stat_str = f"train_loss: {loss:.3f}, avg_loss: {loss_rec.aavg:.3f}"
                 progress.update(desc, local_acc_step, status=stat_str)
                     
                 # skip here if we are accumulating
@@ -317,6 +324,7 @@ class Trainer:
 
                 if fabric.logger:
                     fabric.log_dict(metrics=metrics, step=self.global_step)
+                    fabric.log_dict(metrics=epoch_metrics, step=self.global_step)
 
                 self.global_step += 1
                 self.on_post_training_batch()
