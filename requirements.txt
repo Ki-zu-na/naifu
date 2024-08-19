@@ -8,7 +8,7 @@ diffusers>=0.18
 bitsandbytes>=0.41
 wandb
 ftfy
-xformers==0.0.23
+
 torchvision
 requests
 timm
@@ -24,5 +24,5 @@ opencv-python
 # xformers==0.0.22.post7
 # fairscale
 # prodigyopt
-
+#xformers
 # tensorboard
