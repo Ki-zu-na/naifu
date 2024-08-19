@@ -8,7 +8,7 @@ diffusers>=0.18
 bitsandbytes>=0.41
 wandb
 ftfy
-xformers
+xformers==0.0.23
 torchvision
 requests
 timm
