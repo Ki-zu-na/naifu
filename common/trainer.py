@@ -40,9 +40,11 @@ class Trainer:
             if match:
                 self.current_epoch = int(match.group(1))
                 self.global_step = int(match.group(2))
+                logger.info(f"Loaded checkpoint from {model_path} at epoch {self.current_epoch} and step {self.global_step}.")
             else:
                 self.global_step = int(config.get("global_step", 0))
                 self.current_epoch = int(config.get("current_epoch", 0))
+                logger.warn(f" No checkpoint match in {model_path}.")
         else:
             self.global_step = int(config.get("global_step", 0))
             self.current_epoch = int(config.get("current_epoch", 0))
@@ -255,7 +257,7 @@ class Trainer:
             gc.collect()
             torch.cuda.memory_summary(device=None, abbreviated=False)
         else:
-            logger.info(f"Starting training from epoch {self.current_epoch}")
+            logger.info(f"Starting training from epoch {self.current_epoch} and step {self.global_step}")
 
         should_stop = False
         if cfg.max_epochs > 0 and self.current_epoch >= cfg.max_epochs:
