@@ -1,5 +1,6 @@
 import os
 import gc
+import re
 import time
 
 import torch
@@ -28,8 +29,23 @@ class Trainer:
         self.scheduler = scheduler
         self.dataset = dataset
         self.dataloader = dataloader
-        self.global_step = int(config.get("global_step", 0))
-        self.current_epoch = int(config.get("current_epoch", 0))
+        
+        # 检查配置中是否启用了自动更新
+        auto_update_enabled = config.get("auto_update_epoch_step", False)
+        
+        if auto_update_enabled and hasattr(config.trainer, "model_path"):
+            model_path = config.trainer.model_path
+            # 使用正则表达式匹配文件名中的 epoch 和 step
+            match = re.search(r'checkpoint-e(\d+)_s(\d+)\.ckpt', os.path.basename(model_path))
+            if match:
+                self.current_epoch = int(match.group(1))
+                self.global_step = int(match.group(2))
+            else:
+                self.global_step = int(config.get("global_step", 0))
+                self.current_epoch = int(config.get("current_epoch", 0))
+        else:
+            self.global_step = int(config.get("global_step", 0))
+            self.current_epoch = int(config.get("current_epoch", 0))
 
     def prepare_logger(self):
         """Prepare the logger and log hyperparameters if the logger is not CSVLogger."""
