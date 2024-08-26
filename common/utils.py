@@ -82,7 +82,9 @@ class LossRecorder:
             self.loss_total -= self.loss_list[step]
             self.loss_list[step] = loss
         self.loss_total += loss
-
+    def reset(self):
+        self.loss_list = []
+        self.loss_total = 0.0
     @property
     def avg(self) -> float:
         # return the average loss of the last epoch
