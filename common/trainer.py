@@ -1,4 +1,6 @@
 import os
+import gc
+import re
 import time
 
 import torch
@@ -212,28 +214,48 @@ class Trainer:
         # )
         # self.fabric.load(model_path + "_state.pt", state)
 
-        if cfg.get("resume") and latest_ckpt:
-            opt_name = Path(latest_ckpt).stem + "_optimizer"
-            opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
-            if opt_path.is_file():
-                remainder = fabric.load(opt_path, {"optimizer": self.optimizer})
-                logger.info(f"Loaded optimizer state from {opt_path}")
-                self.global_step = int(remainder.pop("global_step", self.global_step))
-                self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
-            else:
-                if latest_ckpt.endswith(".ckpt"):
-                    sd = torch.load(latest_ckpt, map_location="cpu")
-                    self.global_step = int(sd.pop("global_step", self.global_step))
-                    self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
-                elif latest_ckpt.endswith(".safetensors"):
-                    with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f:
-                        metadata = f.metadata()
-                        self.global_step = int(metadata.get("global_step", self.global_step))
-                        self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
+        if cfg.get("resume"):
+            if latest_ckpt:
+                # 原有的恢复逻辑保持不变
+                opt_name = Path(latest_ckpt).stem + "_optimizer"
+                opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
+                if opt_path.is_file():
+                    remainder = fabric.load(opt_path, {"optimizer": self.optimizer})
+                    logger.info(f"Loaded optimizer state from {opt_path}")
+                    self.global_step = int(remainder.pop("global_step", self.global_step))
+                    self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
+                else:
+                    if latest_ckpt.endswith(".ckpt"):
+                        sd = torch.load(latest_ckpt, map_location="cpu")
+                        self.global_step = int(sd.pop("global_step", self.global_step))
+                        self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
+                    elif latest_ckpt.endswith(".safetensors"):
+                        with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f:
+                            metadata = f.metadata()
+                            self.global_step = int(metadata.get("global_step", self.global_step))
+                            self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
                 
-            logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+                logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+
+                del sd
+                torch.cuda.empty_cache()
+                gc.collect()
+                torch.cuda.memory_summary(device=None, abbreviated=False)
+            else:
+                # 当没有找到 latest_ckpt 时，尝试从 model_path 中提取信息
+                model_path = cfg.get("model_path", "")
+                if model_path:
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)\.ckpt', os.path.basename(model_path))
+                    if match:
+                        self.current_epoch = int(match.group(1))
+                        self.global_step = int(match.group(2))
+                        logger.info(f"No latest checkpoint found. Extracted epoch {self.current_epoch} and step {self.global_step} from model path.")
+                    else:
+                        logger.warn("No latest checkpoint found and couldn't extract information from model path.")
+                else:
+                    logger.info("No latest checkpoint found and no model path provided.")
         else:
-            logger.info(f"Starting training from epoch {self.current_epoch}")
+            logger.info(f"Starting training from epoch {self.current_epoch} and step {self.global_step}")
 
         should_stop = False
         if cfg.max_epochs > 0 and self.current_epoch >= cfg.max_epochs:
@@ -251,6 +273,8 @@ class Trainer:
         resume_epoch = self.global_step // steps_per_epoch
         resume_step = self.global_step % steps_per_epoch
         while not should_stop:
+            # This is the beginning of each epoch
+            loss_rec.reset()  
             desc = f"Epoch {self.current_epoch}"
             progress.update(desc, 0)
             torch.cuda.empty_cache()
@@ -281,7 +305,12 @@ class Trainer:
                 loss_rec.add(epoch=self.current_epoch, step=batch_idx, loss=loss)
                 metrics = {
                     "train/loss": loss,
+                    "train/avg_loss": loss_rec.avg,
                     "trainer/step_t": time.perf_counter() - local_timer,
+                }
+                epoch_metrics = {
+                    "train/epoch_avg_loss": loss_rec.avg,
+                    "epoch": self.current_epoch
                 }
                 stat_str = f"train_loss: {loss:.3f}, avg_loss: {loss_rec.avg:.3f}"
                 progress.update(desc, local_acc_step, status=stat_str)
@@ -311,6 +340,7 @@ class Trainer:
 
                 if fabric.logger:
                     fabric.log_dict(metrics=metrics, step=self.global_step)
+                    fabric.log_dict(metrics=epoch_metrics, step=self.global_step)
 
                 self.global_step += 1
                 self.on_post_training_batch()
@@ -320,3 +350,8 @@ class Trainer:
                 should_stop = True
 
             self.on_post_training_batch(is_last=True)
+
+
+        torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.memory_summary(device=None, abbreviated=False)    
