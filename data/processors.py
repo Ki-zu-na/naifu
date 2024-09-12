@@ -79,9 +79,12 @@ def shuffle_prompts_sdstyle(e: Entry):
     e.prompt = caption
     return e
 
+import random
+
 def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float = 0.7):
     """
     Process an Entry object and return a new Entry object with either 'dan' or 'native' caption.
+    If 'native' caption is empty, 'dan' caption is used regardless of probability.
     
     Args:
     data_entry (Entry): The input Entry object.
@@ -94,15 +97,19 @@ def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float =
     if not data_entry.extras or 'train_caption_dan' not in data_entry.extras or 'train_caption_native' not in data_entry.extras:
         raise ValueError("Missing 'train_caption_dan' or 'train_caption_native' in extras")
     
-    # Randomly choose between 'dan' and 'native' based on probability
-    use_dan = random.random() < dan_probability
-    
-    # Choose the prompt
-    new_prompt = data_entry.extras['train_caption_dan'] if use_dan else data_entry.extras['train_caption_native']
+    # If 'native' caption is empty, use 'dan' caption
+    if not data_entry.extras['train_caption_native']:
+        new_prompt = data_entry.extras['train_caption_dan']
+        caption_type = 'dan'
+    else:
+        # Randomly choose between 'dan' and 'native' based on probability
+        use_dan = random.random() < dan_probability
+        new_prompt = data_entry.extras['train_caption_dan'] if use_dan else data_entry.extras['train_caption_native']
+        caption_type = 'dan' if use_dan else 'native'
     
     # Create a new extras dictionary with the added caption_type
     new_extras = data_entry.extras.copy()
-    new_extras['caption_type'] = 'dan' if use_dan else 'native'
+    new_extras['caption_type'] = caption_type
     
     # Create a new Entry object, inheriting most attributes from the original
     new_entry = Entry(
