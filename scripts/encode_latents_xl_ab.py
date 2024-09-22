@@ -220,8 +220,8 @@ class LatentEncodingDataset(Dataset):
         target_w = resize_w - resize_w % self.divisible
         target_h = resize_h - resize_h % self.divisible
             
-        interp = cv2.INTER_AREA if resize_h < h else cv2.INTER_CUBIC
-        img = cv2.resize(img, (resize_w, resize_h), interpolation=interp)
+        # Use INTER_LANCZOS4 for all resizing operations
+        img = cv2.resize(img, (resize_w, resize_h), interpolation=cv2.INTER_LANCZOS4)
 
         dh, dw = abs(target_h - img.shape[0]) // 2, abs(target_w - img.shape[1]) // 2
         img = img[dh : dh + target_h, dw : dw + target_w]
