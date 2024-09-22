@@ -191,8 +191,8 @@ class LatentEncodingDataset(Dataset):
         target_w = resize_w - resize_w % self.divisible
         target_h = resize_h - resize_h % self.divisible
             
-        interp = cv2.INTER_AREA if resize_h < h else cv2.INTER_CUBIC
-        img = cv2.resize(img, (resize_w, resize_h), interpolation=interp)
+        # Use INTER_LANCZOS4 for all resizing operations
+        img = cv2.resize(img, (resize_w, resize_h), interpolation=cv2.INTER_LANCZOS4)
 
         dh, dw = abs(target_h - img.shape[0]) // 2, abs(target_w - img.shape[1]) // 2
         img = img[dh : dh + target_h, dw : dw + target_w]
@@ -221,7 +221,7 @@ def get_args():
     )
     parser.add_argument("--output", "-o", type=str, required=True, help="output file")
     parser.add_argument("--no-upscale", "-nu", action="store_true", help="do not upscale images")
-    parser.add_argument("--dtype", "-d", type=str, default="float32", help="data type")
+    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="data type")
     parser.add_argument("--num_workers", "-n", type=int, default=4, help="number of dataloader workers")
     parser.add_argument("--model", "-m", type=str, default="stabilityai/sdxl-vae", help="model path")
     parser.add_argument("--subfolder", type=str, default=None, help="use subfolder to locate vae")
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     args = get_args()
     root = args.input
     opt = Path(args.output)
-    dtype = torch.float32 if args.dtype == "float32" else torch.float16
+    dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     num_workers = args.num_workers
 
     vae = AutoencoderKL.from_pretrained(args.model, subfolder=args.subfolder).to(dtype)

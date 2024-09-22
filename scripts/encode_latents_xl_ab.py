@@ -261,7 +261,7 @@ def get_args():
     )
     parser.add_argument("--output", "-o", type=str, required=True, help="output file")
     parser.add_argument("--no-upscale", "-nu", action="store_true", help="do not upscale images")
-    parser.add_argument("--dtype", "-d", type=str, default="float32", help="data type")
+    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="data type")
     parser.add_argument("--num_workers", "-n", type=int, default=6, help="number of dataloader workers")
     args = parser.parse_args()
     return args
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     args = get_args()
     root = args.input
     opt = Path(args.output)
-    dtype = torch.float32 if args.dtype == "float32" else torch.float16
+    dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     num_workers = args.num_workers
 
     vae_path = "stabilityai/sdxl-vae"
