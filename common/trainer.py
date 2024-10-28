@@ -216,7 +216,14 @@ class Trainer:
 
         if cfg.get("resume"):
             if latest_ckpt:
-                # 原有的恢复逻辑保持不变
+                # 首先尝试从文件名中获取信息
+                match = re.search(r'checkpoint-e(\d+)_s(\d+)', os.path.basename(latest_ckpt))
+                if match:
+                    self.current_epoch = int(match.group(1))
+                    self.global_step = int(match.group(2))
+                    logger.info(f"Extracted epoch {self.current_epoch} and step {self.global_step} from checkpoint filename")
+                
+                # 然后尝试从优化器状态或checkpoint中获取信息
                 opt_name = Path(latest_ckpt).stem + "_optimizer"
                 opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
                 if opt_path.is_file():
@@ -237,7 +244,8 @@ class Trainer:
                 
                 logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
 
-                del sd
+                if 'sd' in locals():
+                    del sd
                 torch.cuda.empty_cache()
                 gc.collect()
                 torch.cuda.memory_summary(device=None, abbreviated=False)
