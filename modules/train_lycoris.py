@@ -207,8 +207,8 @@ class StableDiffusionModel(SupervisedFineTune):
         self.model.requires_grad_(False)
         self.text_encoder_1.requires_grad_(False)
         self.text_encoder_2.requires_grad_(False)
-        LycorisNetwork.apply_preset({"target_name": ".*"})
-
+        # 删除这行
+        # LycorisNetwork.apply_preset({"target_name": ".*"})
         logger.info("")
         logger.info(f"Initializing model.lycoris_unet with {cfg.lycoris}")
         self.lycoris_unet = create_lycoris(self.model.diffusion_model, **cfg.get("lycoris_unet", default_cfg))
