@@ -96,11 +96,14 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     if fabric.is_global_zero and os.name != "nt":
         print(f"\n{ModelSummary(model, max_depth=1)}\n")
 
-    model.lycoris_unet, optimizer = fabric.setup(model.lycoris_unet, optimizer)
-    if config.advanced.get("train_text_encoder_1"):
-        model.lycoris_te1 = fabric.setup(model.lycoris_te1)
-    if config.advanced.get("train_text_encoder_2"):
-        model.lycoris_te2 = fabric.setup(model.lycoris_te2)
+    # model.lycoris_unet, optimizer = fabric.setup(model.lycoris_unet, optimizer)
+    # if config.advanced.get("train_text_encoder_1"):
+    #     model.lycoris_te1 = fabric.setup(model.lycoris_te1)
+    # if config.advanced.get("train_text_encoder_2"):
+    #     model.lycoris_te2 = fabric.setup(model.lycoris_te2)
+
+    model, optimizer = fabric.setup(model, optimizer)
+    model.get_module = lambda: model
     
     dataloader = fabric.setup_dataloaders(dataloader)
     return model, dataset, dataloader, optimizer, scheduler
