@@ -81,6 +81,8 @@ def shuffle_prompts_sdstyle(e: Entry):
     if drop_all_fixed:
         fixed_tokens = []
     else:
+        if shuffle_caption:
+            fixed_tokens = random.shuffle(fixed_tokens)
         # Apply individual token dropout to fixed tokens
         fixed_tokens = dropout_tags(fixed_tokens, caption_tag_dropout_rate)
 
@@ -88,7 +90,7 @@ def shuffle_prompts_sdstyle(e: Entry):
         flex_tokens = []
     else:
         if shuffle_caption:
-            fixed_tokens = random.shuffle(fixed_tokens)
+
             random.shuffle(flex_tokens)
         
         # Apply individual token dropout to flex tokens
