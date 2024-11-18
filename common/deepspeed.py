@@ -46,7 +46,7 @@ def _strategy():
 
 
 sdxl_ds_strategy = DeepSpeedStrategy(
-    stage=2,
+    stage=1,
     config={
         # "fp16": {
         #     "enabled": "auto",
@@ -60,7 +60,7 @@ sdxl_ds_strategy = DeepSpeedStrategy(
             "enabled": True,
         },
         "zero_optimization": {
-            "stage": 2,
+            "stage": 1,
             "reduce_scatter": False,
             "overlap_comm": True,
         },
