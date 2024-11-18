@@ -141,6 +141,7 @@ class StableDiffusionModel(pl.LightningModule):
         z = self._denormlize(z)
         with torch.autocast("cuda", enabled=False):
             out = self.first_stage_model.decode(z)
+        return out    
 
     @torch.no_grad()
     def encode_first_stage(self, x):
