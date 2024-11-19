@@ -48,7 +48,6 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model = StableDiffusionModel(
         model_path=model_path, config=config, device=fabric.device
     )
-    model._fabric = fabric
     model.prepare_context(fabric)
     
     # 使用DPO的数据加载方式
@@ -133,7 +132,6 @@ def init_text_encoder():
 
 # define the LightningModule
 class StableDiffusionModel(SupervisedFineTune):
-
     def forward(self, batch):
         with self.forward_context:
             return super().forward(batch)
@@ -205,11 +203,9 @@ class StableDiffusionModel(SupervisedFineTune):
         self.text_encoder_1.train()
         self.text_encoder_2.train()
         self.init_lycoris()
-        # Clone the UNet for DPO reference after LyCORIS initialization
-        self.unet_ref = copy.deepcopy(self.model)
-        self.unet_ref.to(self.target_device)
-        self.unet_ref.eval().requires_grad_(False)
-        self.unet_ref.to(torch.float16)
+
+
+
 
     def init_lycoris(self):
         cfg = self.config
