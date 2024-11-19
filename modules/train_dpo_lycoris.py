@@ -158,7 +158,14 @@ class StableDiffusionModel(SupervisedFineTune):
     def init_model(self):
         # First call the parent class's init_model to set up the base model
         super().init_model()  # This will initialize unet_ref and other DPO-specific attributes
-        
+
+        self.model.requires_grad_(True)
+        self.lycoris_unet.requires_grad_(True)
+        if self.config.advanced.get("train_text_encoder_1"):
+            self.lycoris_te1.requires_grad_(True)
+        if self.config.advanced.get("train_text_encoder_2"):
+            self.lycoris_te2.requires_grad_(True)
+            
         advanced = self.config.get("advanced", {})
         sd = load_torch_file(self.model_path, self.target_device)
         vae, unet, _ = self.build_models(init_conditioner=False)
