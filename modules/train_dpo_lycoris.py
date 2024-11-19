@@ -48,6 +48,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model = StableDiffusionModel(
         model_path=model_path, config=config, device=fabric.device
     )
+    model._fabric = fabric
     model.prepare_context(fabric)
     
     # 使用DPO的数据加载方式
@@ -132,6 +133,10 @@ def init_text_encoder():
 
 # define the LightningModule
 class StableDiffusionModel(SupervisedFineTune):
+    def __init__(self, model_path, config, device):
+        super().__init__(model_path, config, device)
+        self._fabric = None 
+
     def forward(self, batch):
         with self.forward_context:
             return super().forward(batch)
