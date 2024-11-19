@@ -207,6 +207,7 @@ class StableDiffusionModel(SupervisedFineTune):
         self.init_lycoris()
         # Clone the UNet for DPO reference after LyCORIS initialization
         self.unet_ref = copy.deepcopy(self.model)
+        self.unet_ref.to(self.target_device)
         self.unet_ref.eval().requires_grad_(False)
         self.unet_ref.to(torch.float16)
 
