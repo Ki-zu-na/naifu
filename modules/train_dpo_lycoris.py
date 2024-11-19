@@ -2,6 +2,7 @@ import safetensors
 import torch
 import os
 import lightning as pl
+import copy
 from omegaconf import OmegaConf
 from modules.sdxl_dpo_diffusers import setup_hf_dataloader
 from common.utils import (
@@ -132,6 +133,7 @@ def init_text_encoder():
 
 # define the LightningModule
 class StableDiffusionModel(SupervisedFineTune):
+
     def forward(self, batch):
         with self.forward_context:
             return super().forward(batch)
@@ -151,6 +153,9 @@ class StableDiffusionModel(SupervisedFineTune):
             self.model.to(torch.bfloat16)
     
     def init_model(self):
+        # First call the parent class's init_model to set up the base model
+        super().init_model()  # This will initialize unet_ref and other DPO-specific attributes
+        
         advanced = self.config.get("advanced", {})
         sd = load_torch_file(self.model_path, self.target_device)
         vae, unet, _ = self.build_models(init_conditioner=False)
@@ -200,6 +205,10 @@ class StableDiffusionModel(SupervisedFineTune):
         self.text_encoder_1.train()
         self.text_encoder_2.train()
         self.init_lycoris()
+        # Clone the UNet for DPO reference after LyCORIS initialization
+        self.unet_ref = copy.deepcopy(self.model)
+        self.unet_ref.eval().requires_grad_(False)
+        self.unet_ref.to(torch.float16)
 
     def init_lycoris(self):
         cfg = self.config
