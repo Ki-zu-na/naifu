@@ -3,7 +3,7 @@ from PIL import Image
 import torch
 from datasets import load_dataset
 from torchvision import transforms
-
+from data.processors import shuffle_prompts_sdstyle
 
 class PairedDataset(torch.utils.data.Dataset):
     def __init__(self, config):
@@ -19,7 +19,7 @@ class PairedDataset(torch.utils.data.Dataset):
         self.train_transforms = transforms.Compose(
             [
                 transforms.Resize(self.reso, interpolation=interp),
-                transforms.CenterCrop(self.reso),
+                transforms.RandomCrop(self.reso),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
@@ -48,15 +48,24 @@ class PairedDataset(torch.utils.data.Dataset):
             combined_im = torch.cat(im_tup, dim=0)  # no batch dim
             combined_pixel_values.append(combined_im)
 
-        examples.update(
-            {
-                "original_size_as_tuple": original_sizes,
-                "crop_coords_top_left": [(0, 0)] * len(original_sizes),
-                "target_size_as_tuple": [(self.reso, self.reso)] * len(original_sizes),
-                "prompts": examples["caption"],
-                "pixels": combined_pixel_values,
-            }
-        )
+        processed_captions = []
+        for caption in examples["caption"]:
+            # 创建一个Entry类对象来匹配函数参数
+            class Entry:
+                def __init__(self, prompt):
+                    self.prompt = prompt
+            
+            entry = Entry(caption)
+            processed_entry = shuffle_prompts_sdstyle(entry)
+            processed_captions.append(processed_entry.prompt)
+        
+        examples.update({
+            "original_size_as_tuple": original_sizes,
+            "crop_coords_top_left": [(0, 0)] * len(original_sizes),
+            "target_size_as_tuple": [(self.reso, self.reso)] * len(original_sizes),
+            "prompts": processed_captions,  # 使用处理后的captions
+            "pixels": combined_pixel_values,
+        })
         return examples
 
     def __getitem__(self, idx):
