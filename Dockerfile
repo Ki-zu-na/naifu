@@ -5,7 +5,8 @@ FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0"
-ENV CACHE_DIR=/app/.cache
+ENV CACHE_DIR=/root/.cache
+ENV HF_HOME=/app/.cache
 
 # 安装基本依赖
 RUN apt-get update && apt-get install -y \
@@ -24,6 +25,7 @@ RUN apt-get update && apt-get install -y \
 
 # 创建缓存目录
 RUN mkdir -p ${CACHE_DIR}
+RUN mkdir -p ${HF_HOME}
 
 # 升级pip并安装基本Python包
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
