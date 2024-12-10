@@ -15,7 +15,7 @@ from modules.scheduler_utils import apply_zero_terminal_snr, cache_snr_values
 from common.utils import get_class, load_torch_file, EmptyInitWrapper, get_world_size
 from common.logging import logger
 
-from diffusers import DDPMScheduler
+from diffusers import DDPMScheduler, FlowMatchEulerDiscreteScheduler
 from lightning.pytorch.utilities import rank_zero_only
 from safetensors.torch import save_file
 from modules.config_sdxl_base import model_config
@@ -93,6 +93,10 @@ class StableDiffusionModel(pl.LightningModule):
             scheduler_cls = get_class(self.config.noise_scheduler.name)
             self.noise_scheduler = scheduler_cls(**self.config.noise_scheduler.params)
 
+        if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
+            self.noise_scheduler.set_timesteps(
+                self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
+            )
         self.to(self.target_device)
         logger.info(f"Loading model from {self.model_path}")
         missing, unexpected = self.load_state_dict(sd, strict=False)
