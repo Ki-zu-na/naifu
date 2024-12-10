@@ -147,16 +147,15 @@ class SupervisedFineTune(StableDiffusionModel):
             )
             timesteps = timesteps.long()
 
-        # 确保 timesteps 在 scheduler 的有效范围内
-        timesteps = torch.clamp(timesteps, 0, self.noise_scheduler.config.num_train_timesteps - 1)
-
         # 根据 scheduler 类型使用不同的噪声添加方式
         if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
             # 使用 FlowMatch 的方式
+            if not hasattr(self.noise_scheduler, '_timesteps') or len(self.noise_scheduler.timesteps) == 0:
+                self.noise_scheduler.set_timesteps(1000)
             noisy_latents = self.noise_scheduler.scale_noise(
                 sample=latents,
                 timestep=timesteps,
-                noise=noise
+                noise=noise 
             )
             # 预测原始图像
             noise_pred = self.model(noisy_latents, timesteps, cond)
