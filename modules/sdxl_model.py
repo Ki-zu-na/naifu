@@ -309,8 +309,11 @@ class StableDiffusionModel(pl.LightningModule):
         for i, t in enumerate(timesteps):
             # expand the latents if we are doing classifier free guidance
             latent_model_input = latents.repeat((num_latent_input, 1, 1, 1))
-            latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-            latent_model_input = latent_model_input.cuda().to(model_dtype)
+            if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
+                latent_model_input = latent_model_input.to(self.target_device).to(model_dtype)
+            else:
+                latent_model_input = scheduler.scale_model_input(latent_model_input, t)
+                latent_model_input = latent_model_input.to(self.target_device).to(model_dtype)
 
             noise_pred = self.model(latent_model_input, torch.asarray([t]).cuda(), cond)
             pred_uncond, pred_text = noise_pred.chunk(
