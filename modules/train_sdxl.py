@@ -97,7 +97,14 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
         sigma = sigma.unsqueeze(-1)
     return sigma
 
-class SupervisedFineTune(StableDiffusionModel):    
+class SupervisedFineTune(StableDiffusionModel):  
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
+            # 确保在初始化时设置时间步
+            self.noise_scheduler.set_timesteps(
+                self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
+            )  
     def forward(self, batch):
         advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
@@ -137,6 +144,7 @@ class SupervisedFineTune(StableDiffusionModel):
             t = torch.sigmoid(mu + sigma * torch.randn(size=(bsz,), device=latents.device))
             timesteps = t * (timestep_end - timestep_start) + timestep_start  # scale to [min_timestep, max_timestep)
             timesteps = timesteps.long()
+            timesteps = torch.clamp(timesteps, 0, self.noise_scheduler.config.num_train_timesteps - 1)
         else:
             timesteps = torch.randint(
                 low=timestep_start, 
@@ -151,7 +159,11 @@ class SupervisedFineTune(StableDiffusionModel):
         if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
             # 使用 FlowMatch 的方式
             if not hasattr(self.noise_scheduler, '_timesteps') or len(self.noise_scheduler.timesteps) == 0:
-                self.noise_scheduler.set_timesteps(1000)
+                self.noise_scheduler.set_timesteps(
+                    self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
+                )
+            
+            # 使用 FlowMatch 的方式
             noisy_latents = self.noise_scheduler.scale_noise(
                 sample=latents,
                 timestep=timesteps,
