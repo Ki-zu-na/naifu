@@ -299,8 +299,8 @@ class StableDiffusionModel(pl.LightningModule):
         width = max(64, width - width % 8)
         size = (height, width)
         latents_shape = (1, 4, size[0] // 8, size[1] // 8)
-        latents = torch.randn(latents_shape, generator=generator, dtype=torch.float32)
-        latents = latents * scheduler.init_noise_sigma
+        latents = torch.randn(latents_shape, generator=generator, dtype=torch.float32).to(self.target_device)
+        latents = latents * scheduler.init_noise_sigma if hasattr(scheduler, "init_noise_sigma") else latents
 
         scheduler.set_timesteps(steps)
         timesteps = scheduler.timesteps
