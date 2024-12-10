@@ -3,6 +3,7 @@ import torch
 import os
 import lightning as pl
 from omegaconf import OmegaConf
+from diffusers import FlowMatchEulerDiscreteScheduler
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
 from modules.sdxl_model import StableDiffusionModel
@@ -98,7 +99,6 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
 
 class SupervisedFineTune(StableDiffusionModel):    
     def forward(self, batch):
-        
         advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
             self.first_stage_model.to(self.target_device)
@@ -117,7 +117,7 @@ class SupervisedFineTune(StableDiffusionModel):
 
         model_dtype = next(self.model.parameters()).dtype
         cond = {k: v.to(model_dtype) for k, v in cond.items()}
-
+        
         # Sample noise that we'll add to the latents
         noise = torch.randn_like(latents, dtype=model_dtype)
         if advanced.get("offset_noise"):
@@ -126,20 +126,18 @@ class SupervisedFineTune(StableDiffusionModel):
 
         bsz = latents.shape[0]
 
-        # Sample a random timestep for each image
+        # Sample timesteps
         timestep_start = advanced.get("timestep_start", 0)
         timestep_end = advanced.get("timestep_end", 1000)
         timestep_sampler_type = advanced.get("timestep_sampler_type", "uniform")
 
-        # Sample a random timestep for each image
-        if timestep_sampler_type == "logit_normal":  
+        if timestep_sampler_type == "logit_normal":
             mu = advanced.get("timestep_sampler_mean", 0)
             sigma = advanced.get("timestep_sampler_std", 1)
             t = torch.sigmoid(mu + sigma * torch.randn(size=(bsz,), device=latents.device))
             timesteps = t * (timestep_end - timestep_start) + timestep_start  # scale to [min_timestep, max_timestep)
             timesteps = timesteps.long()
         else:
-            # default impl
             timesteps = torch.randint(
                 low=timestep_start, 
                 high=timestep_end,
@@ -148,41 +146,48 @@ class SupervisedFineTune(StableDiffusionModel):
                 device=latents.device,
             )
             timesteps = timesteps.long()
- 
-        # Add noise to the latents according to the noise magnitude at each timestep
-        # (this is the forward diffusion process)
-        noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
-        # Predict the noise residual
-        noisy_latents = noisy_latents.to(model_dtype)
-        noise_pred = self.model(noisy_latents, timesteps, cond)
-
-        # Get the target for loss depending on the prediction type
-        is_v = advanced.get("v_parameterization", False)
-        if is_v:
-            target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+        # 根据 scheduler 类型使用不同的噪声添加方式
+        if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
+            # 使用 FlowMatch 的方式
+            noisy_latents = self.noise_scheduler.scale_noise(
+                sample=latents,
+                timestep=timesteps,
+                noise=noise
+            )
+            # 预测原始图像
+            noise_pred = self.model(noisy_latents, timesteps, cond)
+            # FlowMatch 的损失计算
+            sigmas = get_sigmas(self.noise_scheduler, timesteps, latents.ndim, latents.dtype, latents.device)
+            weighting = torch.ones_like(sigmas)
+            loss = torch.mean(
+                (weighting.float() * (noise_pred.float() - latents.float()) ** 2).reshape(latents.shape[0], -1),
+                1,
+            )
+            loss = loss.mean()
         else:
-            target = noise
-        
-        min_snr_gamma = advanced.get("min_snr", False)            
-        if min_snr_gamma:
-            # do not mean over batch dimension for snr weight or scale v-pred loss
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-            loss = loss.mean([1, 2, 3])
+            # 原有的 DDPM 方式
+            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
+            noise_pred = self.model(noisy_latents, timesteps, cond)
 
+            is_v = advanced.get("v_parameterization", False)
+            if is_v:
+                target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+            else:
+                target = noise
+
+            min_snr_gamma = advanced.get("min_snr", False)
             if min_snr_gamma:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                loss = loss.mean([1, 2, 3])
                 loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
-                
-            # add debiased estimation loss
-            # --------------
-            snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
-            snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
-            weight = 1 / torch.sqrt(snr_t)
-            loss = weight * loss
-            # --------------
-            loss = loss.mean()  # mean over batch dimension
-        else:
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+                snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])
+                snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)
+                weight = 1 / torch.sqrt(snr_t)
+                loss = weight * loss
+                loss = loss.mean()
+            else:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             raise FloatingPointError("Error infinite or NaN loss detected")
