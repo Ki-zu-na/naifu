@@ -115,40 +115,59 @@ class SupervisedFineTune(StableDiffusionModel):
                 latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
         else:
             self.first_stage_model.cpu()
-            latents = batch["pixels"]  # 直接使用输入的latents，不需要额外处理
-            noise = torch.randn_like(latents, dtype=torch.float32)
-            bsz = latents.shape[0]
-        # 根据 scheduler 类型使用不同的训练逻辑
+            latents = batch["pixels"]
+
+        cond = self.encode_batch(batch)
+        if advanced.get("condition_dropout_rate", 0.0) > 0.0:
+            cond = self.dropout_cond(cond)
+
+        model_dtype = next(self.model.parameters()).dtype
+        cond = {k: v.to(model_dtype) for k, v in cond.items()}
+
+        # Sample noise that we'll add to the latents
+        noise = torch.randn_like(latents, dtype=model_dtype)
+        if advanced.get("offset_noise"):
+            offset = torch.randn(latents.shape[0], latents.shape[1], 1, 1, device=latents.device)
+            noise = torch.randn_like(latents) + float(advanced.get("offset_noise_val")) * offset
+
+        bsz = latents.shape[0]
+
+        # 根据 scheduler 类型选择不同的时间步采样和加噪方式
         if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
             # FlowMatch 训练逻辑
             if not hasattr(self.noise_scheduler, '_timesteps') or len(self.noise_scheduler.timesteps) == 0:
-                self.noise_scheduler.set_timesteps(1000)
+                self.noise_scheduler.set_timesteps(
+                    self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
+                )
                 self.noise_scheduler.timesteps = self.noise_scheduler.timesteps.to(self.target_device)
-            
+
             # 使用 logit normal 采样
             u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=self.target_device)
             u = torch.sigmoid(u)
-            
+
             num_timesteps = len(self.noise_scheduler.timesteps)
             indices = (u * (num_timesteps - 1)).long().clamp(0, num_timesteps - 1)
             timesteps = self.noise_scheduler.timesteps[indices].to(device=latents.device)
-            
+
             sigmas = self.get_sigmas(timesteps, latents)
             noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
             
-            prompt_embeds, pooled_prompt_embeds = self.encode_prompt(batch["prompts"])
-            model_pred = self.model(noisy_latents, timesteps, c=prompt_embeds, y=pooled_prompt_embeds)
+            # 预测目标改为原始图像
+            target = latents
+            
+            # 使用不同的损失计算方式
+            model_pred = self.model(noisy_latents.to(model_dtype), timesteps, cond)
             model_pred = model_pred * (-sigmas) + noisy_latents
             weighting = torch.ones_like(sigmas)
             loss = torch.mean(
                 (
-                    weighting.float() * (model_pred.float() - latents.float()) ** 2
+                    weighting.float() * (model_pred.float() - target.float()) ** 2
                 ).reshape(latents.shape[0], -1),
                 1,
             )
             loss = loss.mean()
         else:
-            # 原有的 DDPM 训练逻辑
+            # 原有 DDPM 训练逻辑
             timestep_start = advanced.get("timestep_start", 0)
             timestep_end = advanced.get("timestep_end", 1000)
             timestep_sampler_type = advanced.get("timestep_sampler_type", "uniform")
@@ -167,19 +186,24 @@ class SupervisedFineTune(StableDiffusionModel):
                     dtype=torch.int64,
                     device=latents.device,
                 )
+                timesteps = timesteps.long()
 
-            # Add noise to the latents according to the noise magnitude at each timestep
             noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
-            
-            # Get the target for loss depending on the prediction type
-            prompt_embeds, pooled_prompt_embeds = self.encode_prompt(batch["prompts"])
-            model_pred = self.model(noisy_latents, timesteps, c=prompt_embeds, y=pooled_prompt_embeds)
-            
+
+            noisy_latents = noisy_latents.to(model_dtype)
+            noise_pred = self.model(noisy_latents, timesteps, cond)
+
             is_v = advanced.get("v_parameterization", False)
             target = self.noise_scheduler.get_velocity(latents, noise, timesteps) if is_v else noise
 
-            # 计算损失
-            loss = torch.nn.functional.mse_loss(model_pred.float(), target.float(), reduction="mean")
+            min_snr_gamma = advanced.get("min_snr", False)
+            if min_snr_gamma:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                loss = loss.mean([1, 2, 3])
+                loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+                loss = loss.mean()
+            else:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             raise FloatingPointError("Error infinite or NaN loss detected")
@@ -189,13 +213,15 @@ class SupervisedFineTune(StableDiffusionModel):
     def get_sigmas(self, timesteps, latents):
         # 确保 scheduler 已经初始化
         if not hasattr(self.noise_scheduler, '_timesteps') or len(self.noise_scheduler.timesteps) == 0:
-            self.noise_scheduler.set_timesteps(1000)
+            self.noise_scheduler.set_timesteps(
+                self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
+            )
             self.noise_scheduler.timesteps = self.noise_scheduler.timesteps.to(self.target_device)
-        
+
         sigmas = self.noise_scheduler.sigmas.to(device=self.target_device, dtype=latents.dtype)
         schedule_timesteps = self.noise_scheduler.timesteps.to(self.target_device)
         timesteps = timesteps.to(self.target_device)
-        
+
         step_indices = torch.tensor(
             [min(max(0, (schedule_timesteps == t).nonzero().item() if len((schedule_timesteps == t).nonzero()) > 0 else 0), len(sigmas)-1) 
              for t in timesteps],
