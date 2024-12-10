@@ -106,11 +106,18 @@ class SupervisedFineTune(StableDiffusionModel):
                 self.config.noise_scheduler.params.get("num_train_timesteps", 1000)
             )  
     def forward(self, batch):
-        self.first_stage_model.to(self.target_device)
-        latents = self.encode_first_stage(batch["pixels"].float())
-        noise = torch.randn_like(latents, dtype=torch.float32)
-        bsz = latents.shape[0]
-        
+        advanced = self.config.get("advanced", {})
+        if not batch["is_latent"]:
+            self.first_stage_model.to(self.target_device)
+            latents = self.encode_first_stage(batch["pixels"].to(self.first_stage_model.dtype))
+            if torch.any(torch.isnan(latents)):
+                logger.info("NaN found in latents, replacing with zeros")
+                latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
+        else:
+            self.first_stage_model.cpu()
+            latents = batch["pixels"]  # 直接使用输入的latents，不需要额外处理
+            noise = torch.randn_like(latents, dtype=torch.float32)
+            bsz = latents.shape[0]
         # 根据 scheduler 类型使用不同的训练逻辑
         if isinstance(self.noise_scheduler, FlowMatchEulerDiscreteScheduler):
             # FlowMatch 训练逻辑
@@ -142,7 +149,6 @@ class SupervisedFineTune(StableDiffusionModel):
             loss = loss.mean()
         else:
             # 原有的 DDPM 训练逻辑
-            advanced = self.config.get("advanced", {})
             timestep_start = advanced.get("timestep_start", 0)
             timestep_end = advanced.get("timestep_end", 1000)
             timestep_sampler_type = advanced.get("timestep_sampler_type", "uniform")
