@@ -117,6 +117,7 @@ class SupervisedFineTune(StableDiffusionModel):
 
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
+        sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
         
         timestep_sampler_type = advanced.get("timestep_sampler_type", "uniform")
         if timestep_sampler_type == "logit_normal":
@@ -125,7 +126,7 @@ class SupervisedFineTune(StableDiffusionModel):
             t = torch.sigmoid(mu + s * torch.randn(size=(bsz,), device=latents.device))
             timesteps = t * 1000.0  
         else:
-            sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
+            
             timesteps = (sigmas * 1000.0)  # maybe better to use discrete timesteps
 
         sigmas = sigmas.view(-1, 1, 1, 1)
