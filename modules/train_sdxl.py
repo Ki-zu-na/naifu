@@ -151,8 +151,6 @@ class SupervisedFineTune(StableDiffusionModel):
             sigmas = self.get_sigmas(timesteps, latents)
             noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
             
-            # 预测目标改为原始图像
-            target = latents
             
             # 使用不同的损失计算方式
             model_pred = self.model(noisy_latents.to(model_dtype), timesteps, cond)
