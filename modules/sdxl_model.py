@@ -295,8 +295,8 @@ class StableDiffusionModel(pl.LightningModule):
         width = max(64, width - width % 8)
         size = (height, width)
         latents_shape = (1, 4, size[0] // 8, size[1] // 8)
-        latents = torch.randn(latents_shape, generator=generator, dtype=torch.float32)
-        latents = latents * scheduler.init_noise_sigma
+        latents = torch.randn(latents_shape, generator=generator, dtype=torch.float32).to(self.target_device)
+        latents = latents * scheduler.init_noise_sigma if hasattr(scheduler, "init_noise_sigma") else latents
 
         scheduler.set_timesteps(steps)
         timesteps = scheduler.timesteps
@@ -305,8 +305,8 @@ class StableDiffusionModel(pl.LightningModule):
         for i, t in enumerate(timesteps):
             # expand the latents if we are doing classifier free guidance
             latent_model_input = latents.repeat((num_latent_input, 1, 1, 1))
-            latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-            latent_model_input = latent_model_input.cuda().to(model_dtype)
+            latent_model_input = scheduler.scale_model_input(latent_model_input, t) if hasattr(scheduler, "scale_model_input") else latent_model_input
+            latent_model_input = latent_model_input.to(self.target_device).to(model_dtype)
 
             noise_pred = self.model(latent_model_input, torch.asarray([t]).cuda(), cond)
             pred_uncond, pred_text = noise_pred.chunk(
