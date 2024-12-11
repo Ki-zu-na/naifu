@@ -150,8 +150,7 @@ class SupervisedFineTune(StableDiffusionModel):
             timesteps = self.noise_scheduler.timesteps[indices].to(device=latents.device)
             sigmas = self.get_sigmas(timesteps, latents)
             noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
-            
-            
+            target = noise
             # 使用不同的损失计算方式
             model_pred = self.model(noisy_latents.to(model_dtype), timesteps, cond)
             model_pred = model_pred * (-sigmas) + noisy_latents
