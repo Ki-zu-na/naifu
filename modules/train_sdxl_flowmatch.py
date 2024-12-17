@@ -117,11 +117,20 @@ class SupervisedFineTune(StableDiffusionModel):
 
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
-        sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
-            
-        timesteps = (sigmas * 1000.0)  # maybe better to use discrete timesteps
-
-        sigmas = sigmas.view(-1, 1, 1, 1)
+        
+        # 使用独立的 get_sigmas 函数
+        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=self.target_device)
+        u = torch.nn.functional.sigmoid(u)
+        indices = (u * 1000).long()
+        timesteps = self.noise_scheduler.timesteps[indices].to(device=latents.device)
+        sigmas = get_sigmas(
+            self.noise_scheduler, 
+            timesteps, 
+            n_dim=latents.ndim, 
+            dtype=latents.dtype, 
+            device=latents.device
+        )
+        
         noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
