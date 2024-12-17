@@ -119,10 +119,13 @@ class SupervisedFineTune(StableDiffusionModel):
         noise = torch.randn_like(latents, device=latents.device)
         
         # 使用独立的 get_sigmas 函数
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=latents.device)
+        scheduler_device = self.noise_scheduler.timesteps.device
+        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
         u = torch.nn.functional.sigmoid(u)
-        indices = (u * 1000).long().to(device=latents.device)  
-        timesteps = self.noise_scheduler.timesteps[indices]
+        indices = (u * 1000).long()
+        timesteps = self.noise_scheduler.timesteps[indices]  # 在同一设备上索引
+        timesteps = timesteps.to(device=latents.device) 
+        
         sigmas = get_sigmas(
             self.noise_scheduler, 
             timesteps, 
