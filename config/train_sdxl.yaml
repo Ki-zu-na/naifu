@@ -33,6 +33,26 @@ advanced:
   v_parameterization: false
   zero_terminal_snr: false
   do_edm_style_training: false
+
+  use_tag_loss: true
+  tag_loss_alpha: 0.2
+  tag_loss_beta: 0.99
+  tag_loss_strength: 1.0
+  tag_rewards:
+    "bad anatomy": 0.99
+    "bad feet": 0.99
+    "bad hands": 0.99
+    "bad leg": 0.99
+    "best quality": 1.015
+    "censored": 0.975
+    "comic": 0.99
+    "error": 0.98
+    "jpeg artifacts": 0.99
+    "lowres": 0.99
+    "masterpiece": 1.03
+    "sample watermark": 0.95
+    "scenery": 1.005
+    "uncensored": 1.01
   
 lightning:
   accelerator: gpu
@@ -76,11 +96,4 @@ sampling:
     - "1girl, solo, shirt, thighhighs, skirt, hands on hips, white shirt, crystal, flandre scarlet, blonde hair, grey skirt, red bow, red eyes, black thighhighs, wings, white background,"
     - "1girl,sitting,fantasy,masterpiece,best quality,(long blonde hair),(blue eyes),(floating hair),(black ribbed sweater:1.1),(red plaid skirt:1.1),(cat ears)"
 
-# 添加标签损失相关配置
-use_tag_loss: true
-tag_loss_alpha: 0.2
-tag_loss_beta: 0.99
-tag_loss_strength: 1.0
-tag_rewards:
-  "artist:good_artist": 1.1
-  "character:popular_character": 1.05
+
