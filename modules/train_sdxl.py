@@ -2,6 +2,7 @@ import safetensors
 import torch
 import os
 import lightning as pl
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
@@ -97,6 +98,23 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
     return sigma
 
 class SupervisedFineTune(StableDiffusionModel):    
+    def __init__(self, model_path, config, device):
+        super().__init__(model_path, config, device)
+        
+        if config.get("use_tag_loss", False):
+            from modules.losses.tag_loss import TagLossModule
+            
+            def is_special_tag(tag: str) -> bool:
+                return tag.startswith(("artist:", "character:", "style:"))
+            
+            self.tag_loss_module = TagLossModule(
+                check_fn=is_special_tag,
+                alpha=config.get("tag_loss_alpha", 0.2),
+                beta=config.get("tag_loss_beta", 0.99),
+                strength=config.get("tag_loss_strength", 1.0),
+                tag_rewards=config.get("tag_rewards", {})
+            )
+
     def forward(self, batch):
         
         advanced = self.config.get("advanced", {})
@@ -153,36 +171,56 @@ class SupervisedFineTune(StableDiffusionModel):
         # (this is the forward diffusion process)
         noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
-        # Predict the noise residual
+        # Predict the noise residual and calculate loss
         noisy_latents = noisy_latents.to(model_dtype)
-        noise_pred = self.model(noisy_latents, timesteps, cond)
-
-        # Get the target for loss depending on the prediction type
-        is_v = advanced.get("v_parameterization", False)
-        if is_v:
-            target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
-        else:
-            target = noise
         
-        min_snr_gamma = advanced.get("min_snr", False)            
-        if min_snr_gamma:
-            # do not mean over batch dimension for snr weight or scale v-pred loss
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-            loss = loss.mean([1, 2, 3])
-
-            if min_snr_gamma:
-                loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
-                
-            # add debiased estimation loss
-            # --------------
-            snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
-            snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
-            weight = 1 / torch.sqrt(snr_t)
-            loss = weight * loss
-            # --------------
-            loss = loss.mean()  # mean over batch dimension
+        if hasattr(self, "tag_loss_module"):
+            model_output = self.model(
+                noisy_latents,
+                timesteps,
+                cond
+            )
+            
+            # 计算基础损失
+            base_loss = F.mse_loss(model_output.float(), noise.float(), reduction='none').mean(dim=[1,2,3])
+            
+            # 计算标签权重
+            weights = self.tag_loss_module.calculate_loss_weights(
+                batch["prompts"],
+                base_loss.detach()
+            )
+            
+            # 应用权重到损失
+            loss = (base_loss * weights).mean()
         else:
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+            noise_pred = self.model(noisy_latents, timesteps, cond)
+
+            # Get the target for loss depending on the prediction type
+            is_v = advanced.get("v_parameterization", False)
+            if is_v:
+                target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+            else:
+                target = noise
+            
+            min_snr_gamma = advanced.get("min_snr", False)            
+            if min_snr_gamma:
+                # do not mean over batch dimension for snr weight or scale v-pred loss
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                loss = loss.mean([1, 2, 3])
+
+                if min_snr_gamma:
+                    loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+                    
+                # add debiased estimation loss
+                # --------------
+                snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
+                snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
+                weight = 1 / torch.sqrt(snr_t)
+                loss = weight * loss
+                # --------------
+                loss = loss.mean()  # mean over batch dimension
+            else:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             raise FloatingPointError("Error infinite or NaN loss detected")
