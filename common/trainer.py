@@ -130,14 +130,21 @@ class Trainer:
             "current_epoch": str(self.current_epoch),
         }
         
-        # # save state if you want to use fabric.save
-        # state = dict(
-        #     mode=self.model,
-        #     global_step=self.global_step, 
-        #     current_epoch=self.current_epoch,
-        #     optimizer=self.optimizer,
-        # )
-        # self.fabric.save(model_path + "_state.pt", state)
+        # 保存完整训练状态
+        if not save_weights_only:
+            full_state = {
+                "model": self.model.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "scheduler": self.scheduler.state_dict() if self.scheduler else None,
+                "global_step": self.global_step,
+                "current_epoch": self.current_epoch,
+                "rng_state": {
+                    "torch": torch.get_rng_state(),
+                    "cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+                }
+            }
+            self.fabric.save(model_path + "_full_state.pt", full_state)
+            logger.info(f"Saving model state to {model_path}_full_state.pt")
         
         self.model.save_checkpoint(model_path, metadata)
         if not save_weights_only:
@@ -257,39 +264,66 @@ class Trainer:
 
         if cfg.get("resume"):
             if latest_ckpt:
-                # 首先尝试从文件名中获取信息
-                match = re.search(r'checkpoint-e(\d+)_s(\d+)', os.path.basename(latest_ckpt))
-                if match:
-                    self.current_epoch = int(match.group(1))
-                    self.global_step = int(match.group(2))
-                    logger.info(f"Extracted epoch {self.current_epoch} and step {self.global_step} from checkpoint filename")
-                
-                # 然后尝试从优化器状态或checkpoint中获取信息
-                opt_name = Path(latest_ckpt).stem + "_optimizer"
-                opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
-                if opt_path.is_file():
-                    remainder = fabric.load(opt_path, {"optimizer": self.optimizer})
-                    logger.info(f"Loaded optimizer state from {opt_path}")
-                    self.global_step = int(remainder.pop("global_step", self.global_step))
-                    self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
+                full_state_path = latest_ckpt.replace(".ckpt", "_full_state.pt")
+                if os.path.exists(full_state_path):
+                    logger.info(f"从完整状态文件恢复训练: {full_state_path}")
+                    full_state = self.fabric.load(full_state_path)
+                    
+                    # 恢复模型状态
+                    self.model.load_state_dict(full_state["model"])
+                    
+                    # 恢复优化器状态
+                    self.optimizer.load_state_dict(full_state["optimizer"])
+                    
+                    # 恢复调度器状态
+                    if self.scheduler and full_state["scheduler"]:
+                        self.scheduler.load_state_dict(full_state["scheduler"])
+                    
+                    # 恢复训练步数和轮数
+                    self.global_step = full_state["global_step"]
+                    self.current_epoch = full_state["current_epoch"]
+                    
+                    # 恢复随机数生成器状态
+                    torch.set_rng_state(full_state["rng_state"]["torch"])
+                    if torch.cuda.is_available() and full_state["rng_state"]["cuda"] is not None:
+                        torch.cuda.set_rng_state(full_state["rng_state"]["cuda"])
+                    
+                    logger.info(f"成功恢复训练状态到步数 {self.global_step} 和轮数 {self.current_epoch}")
                 else:
-                    if latest_ckpt.endswith(".ckpt"):
-                        sd = torch.load(latest_ckpt, map_location="cpu")
-                        self.global_step = int(sd.pop("global_step", self.global_step))
-                        self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
-                    elif latest_ckpt.endswith(".safetensors"):
-                        with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f:
-                            metadata = f.metadata()
-                            self.global_step = int(metadata.get("global_step", self.global_step))
-                            self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
+                    # 回退到现有的恢复逻辑
+                    # 首先尝试从文件名中获取信息
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)', os.path.basename(latest_ckpt))
+                    if match:
+                        self.current_epoch = int(match.group(1))
+                        self.global_step = int(match.group(2))
+                        logger.info(f"Extracted epoch {self.current_epoch} and step {self.global_step} from checkpoint filename")
+                    
+                    # 然后尝试从优化器状态或checkpoint中获取信息
+                    opt_name = Path(latest_ckpt).stem + "_optimizer"
+                    opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
+                    if opt_path.is_file():
+                        remainder = fabric.load(opt_path, {"optimizer": self.optimizer})
+                        logger.info(f"Loaded optimizer state from {opt_path}")
+                        self.global_step = int(remainder.pop("global_step", self.global_step))
+                        self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
+                    else:
+                        if latest_ckpt.endswith(".ckpt"):
+                            sd = torch.load(latest_ckpt, map_location="cpu")
+                            self.global_step = int(sd.pop("global_step", self.global_step))
+                            self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
+                        elif latest_ckpt.endswith(".safetensors"):
+                            with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f:
+                                metadata = f.metadata()
+                                self.global_step = int(metadata.get("global_step", self.global_step))
+                                self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
                 
-                logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+                    logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
 
-                if 'sd' in locals():
-                    del sd
-                torch.cuda.empty_cache()
-                gc.collect()
-                torch.cuda.memory_summary(device=None, abbreviated=False)
+                    if 'sd' in locals():
+                        del sd
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    torch.cuda.memory_summary(device=None, abbreviated=False)
             else:
                 # 当没有找到 latest_ckpt 时，尝试从 model_path 中提取信息
                 model_path = cfg.get("model_path", "")
