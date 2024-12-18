@@ -99,6 +99,21 @@ class SupervisedFineTune(StableDiffusionModel):
     def init_model(self):
         super().init_model()
         
+        # 初始化tag loss模块
+        if self.config.advanced.get("use_tag_loss", False):
+            from modules.losses.tag_loss import TagLossModule
+            
+            def is_special_tag(tag: str) -> bool:
+                return tag.startswith(("artist:", "character:", "style:"))
+            
+            self.tag_loss_module = TagLossModule(
+                check_fn=is_special_tag,
+                alpha=self.config.advanced.get("tag_loss_alpha", 0.2),
+                beta=self.config.advanced.get("tag_loss_beta", 0.99),
+                strength=self.config.advanced.get("tag_loss_strength", 1.0),
+                tag_rewards=self.config.advanced.get("tag_rewards", {})
+            )
+    
     def forward(self, batch):
         advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
@@ -138,6 +153,27 @@ class SupervisedFineTune(StableDiffusionModel):
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
         target = noise - latents
-        loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1) 
-        return loss.mean()
+        base_loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1)
+        
+        # 应用tag loss
+        if hasattr(self, "tag_loss_module"):
+            # 更新全局步数
+            self.tag_loss_module.global_step = self.global_step
+            
+            # 计算权重并应用
+            weights = self.tag_loss_module.calculate_loss_weights(
+                batch["prompt"],  # 假设prompt在batch中
+                base_loss.detach()
+            )
+            
+            # 记录权重统计
+            if hasattr(self, "log_dict"):
+                self.log_dict({
+                    "train/tag_loss_weight": weights.mean().item(),
+                    "train/tag_loss_std": weights.std().item()
+                })
+            
+            return (base_loss * weights).mean()
+        
+        return base_loss.mean()
 
