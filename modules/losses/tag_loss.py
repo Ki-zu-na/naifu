@@ -30,12 +30,20 @@ DEFAULT_SCALE = {
 class TagFreqScale(UserDict):
     def __init__(self, scales=DEFAULT_SCALE):
         super().__init__(data=scales)
-        self.steps = sorted(self.keys())
+        self.data = {int(k): v for k, v in scales.items()}
+        self.steps = sorted(self.data.keys())
     
     def __getitem__(self, key):
+        key = int(key) if not isinstance(key, int) else key
+        
         if key not in self.data:
             idx = bisect_left(self.steps, key)
-            key = self.steps[idx] if idx < len(self.steps) else self.steps[-1]
+            if idx >= len(self.steps):
+                key = self.steps[-1]
+            elif idx == 0:
+                key = self.steps[0]
+            else:
+                key = self.steps[idx]
         return self.data[key]
 
 class TagLossModule:
