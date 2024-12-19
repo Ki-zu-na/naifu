@@ -2,6 +2,7 @@ import safetensors
 import torch
 import os
 import lightning as pl
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
@@ -97,6 +98,24 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
     return sigma
 
 class SupervisedFineTune(StableDiffusionModel):    
+    def __init__(self, model_path, config, device):
+        super().__init__(model_path, config, device)
+        
+        # 初始化tag loss模块
+        if config.advanced.get("use_tag_loss", False):
+            from modules.losses.tag_loss import TagLossModule
+            
+            def is_special_tag(tag: str) -> bool:
+                return tag.startswith(("artist:", "character:", "style:"))
+            
+            self.tag_loss_module = TagLossModule(
+                check_fn=is_special_tag,
+                alpha=config.advanced.get("tag_loss_alpha", 0.2),
+                beta=config.advanced.get("tag_loss_beta", 0.99),
+                strength=config.advanced.get("tag_loss_strength", 1.0),
+                tag_rewards=config.advanced.get("tag_rewards", {})
+            )
+
     def forward(self, batch):
         
         advanced = self.config.get("advanced", {})
@@ -153,36 +172,105 @@ class SupervisedFineTune(StableDiffusionModel):
         # (this is the forward diffusion process)
         noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
-        # Predict the noise residual
+        # Predict the noise residual and calculate loss
         noisy_latents = noisy_latents.to(model_dtype)
-        noise_pred = self.model(noisy_latents, timesteps, cond)
-
-        # Get the target for loss depending on the prediction type
-        is_v = advanced.get("v_parameterization", False)
-        if is_v:
-            target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
-        else:
-            target = noise
         
-        min_snr_gamma = advanced.get("min_snr", False)            
-        if min_snr_gamma:
-            # do not mean over batch dimension for snr weight or scale v-pred loss
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-            loss = loss.mean([1, 2, 3])
-
+        if hasattr(self, "tag_loss_module"):
+            # 更新全局步数
+            self.tag_loss_module.global_step = self.global_step
+            
             if min_snr_gamma:
-                loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+                base_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                base_loss = base_loss.mean([1, 2, 3])  # 保持每个样本的损失独立
                 
-            # add debiased estimation loss
-            # --------------
-            snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
-            snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
-            weight = 1 / torch.sqrt(snr_t)
-            loss = weight * loss
-            # --------------
-            loss = loss.mean()  # mean over batch dimension
+                # 计算权重并应用
+                weights = self.tag_loss_module.calculate_loss_weights(
+                    batch["prompts"],
+                    base_loss.detach()
+                )
+                
+                # 记录详细的日志
+                if hasattr(self, "log_dict"):
+                    self.log_dict({
+                        "train/base_loss": base_loss.mean().item(),
+                        "train/base_loss_std": base_loss.std().item(),
+                        "train/tag_loss_weight": weights.mean().item(),
+                        "train/tag_loss_std": weights.std().item(),
+                        "train/weighted_loss": (base_loss * weights).mean().item(),
+                        "train/max_weight": weights.max().item(),
+                        "train/min_weight": weights.min().item()
+                    })
+                    
+                    # 记录特殊标签的数量
+                    special_tags_count = sum(1 for prompt in batch["prompts"] 
+                                          for tag in prompt.split(",") 
+                                          if self.tag_loss_module.check_fn(tag.strip()))
+                    self.log_dict({
+                        "train/special_tags_count": special_tags_count
+                    })
+                
+                # 存储metrics供trainer使用
+                self.tag_loss_metrics = {
+                    "train/base_loss": base_loss.mean().item(),
+                    "train/base_loss_std": base_loss.std().item(),
+                    "train/tag_loss_weight": weights.mean().item(),
+                    "train/tag_loss_std": weights.std().item(),
+                    "train/weighted_loss": (base_loss * weights).mean().item(),
+                    "train/max_weight": weights.max().item(),
+                    "train/min_weight": weights.min().item(),
+                    "train/special_tags_count": special_tags_count
+                }
+                
+                # 应用SNR权重和其他权重
+                if min_snr_gamma:
+                    base_loss = apply_snr_weight(base_loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+                
+                snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])
+                snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)
+                weight = 1 / torch.sqrt(snr_t)
+                
+                # 将所有权重相乘并应用到损失
+                final_weights = weights * weight
+                loss = (base_loss * final_weights).mean()
+            else:
+                # 对于没有使用min_snr_gamma的情况
+                base_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                base_loss = base_loss.mean([1, 2, 3])
+                
+                weights = self.tag_loss_module.calculate_loss_weights(
+                    batch["prompts"],
+                    base_loss.detach()
+                )
+                loss = (base_loss * weights).mean()
         else:
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+            noise_pred = self.model(noisy_latents, timesteps, cond)
+
+            # Get the target for loss depending on the prediction type
+            is_v = advanced.get("v_parameterization", False)
+            if is_v:
+                target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+            else:
+                target = noise
+            
+            min_snr_gamma = advanced.get("min_snr", False)            
+            if min_snr_gamma:
+                # do not mean over batch dimension for snr weight or scale v-pred loss
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                loss = loss.mean([1, 2, 3])
+
+                if min_snr_gamma:
+                    loss = apply_snr_weight(loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+                    
+                # add debiased estimation loss
+                # --------------
+                snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
+                snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
+                weight = 1 / torch.sqrt(snr_t)
+                loss = weight * loss
+                # --------------
+                loss = loss.mean()  # mean over batch dimension
+            else:
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             raise FloatingPointError("Error infinite or NaN loss detected")
