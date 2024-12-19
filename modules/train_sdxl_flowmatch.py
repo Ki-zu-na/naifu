@@ -155,6 +155,13 @@ class SupervisedFineTune(StableDiffusionModel):
         target = noise - latents
         base_loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1)
         
+        # 在计算base_loss后添加日志
+        if hasattr(self, "log_dict"):
+            self.log_dict({
+                "train/base_loss": base_loss.mean().item(),
+                "train/base_loss_std": base_loss.std().item()
+            })
+        
         # 应用tag loss
         if hasattr(self, "tag_loss_module"):
             # 更新全局步数
@@ -166,11 +173,22 @@ class SupervisedFineTune(StableDiffusionModel):
                 base_loss.detach()
             )
             
-            # 记录权重统计
+            # 增加更详细的日志记录
             if hasattr(self, "log_dict"):
                 self.log_dict({
                     "train/tag_loss_weight": weights.mean().item(),
-                    "train/tag_loss_std": weights.std().item()
+                    "train/tag_loss_std": weights.std().item(),
+                    "train/weighted_loss": (base_loss * weights).mean().item(),
+                    "train/max_weight": weights.max().item(),
+                    "train/min_weight": weights.min().item()
+                })
+                
+                # 记录特殊标签的数量
+                special_tags_count = sum(1 for prompt in batch["prompts"] 
+                                      for tag in prompt.split(",") 
+                                      if self.tag_loss_module.check_fn(tag.strip()))
+                self.log_dict({
+                    "train/special_tags_count": special_tags_count
                 })
             
             return (base_loss * weights).mean()
