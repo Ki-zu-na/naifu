@@ -393,10 +393,10 @@ class Trainer:
                     self.optimizer.zero_grad(set_to_none=True)
 
                 if self.scheduler is not None:
-                    is_transformers_sch = "transformers" in config.scheduler.name
-                    fp_batch = self.current_epoch + batch_idx / len(self.dataloader)
-                    actual_step = self.global_step if is_transformers_sch else fp_batch
-                    self.scheduler.step(actual_step)
+                    if "transformers" in config.scheduler.name:
+                        self.scheduler.step(self.global_step)
+                    else:
+                        self.scheduler.step()
 
                 if fabric.logger:
                     fabric.log_dict(metrics=metrics, step=self.global_step)
