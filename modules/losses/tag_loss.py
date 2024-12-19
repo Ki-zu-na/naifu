@@ -73,7 +73,7 @@ class TagLossModule:
     def calculate_loss_weights(self, prompts, base_loss):
         weights = []
         batch_len = len(prompts)
-        base_acc = sum(base_loss) / batch_len
+        base_acc = sum(base_loss).item() / batch_len
         
         if self.total_loss <= 0.0:
             self.total_loss = base_acc
@@ -84,7 +84,7 @@ class TagLossModule:
         for i in range(batch_len):
             base_mult = 1
             sample_tags = prompts[i].split(self.tag_sep)
-            sample_loss = base_loss[i]
+            sample_loss = base_loss[i].item()
             
             tag_mults = []
             base_mults = []
@@ -109,9 +109,9 @@ class TagLossModule:
                     base_mult *= self.tag_rewards[tag]
                     
             if base_mults:
-                base_mult *= np.array(base_mults).mean()
+                base_mult *= np.mean(base_mults)
                 
-            hist_loss = np.array(tag_mults).mean() if tag_mults else sample_loss
+            hist_loss = np.mean(tag_mults) if tag_mults else sample_loss
             target_loss = (sample_loss * (1.0 - self.alpha)) + (hist_loss * self.alpha)
             target_loss *= base_mult
             
@@ -119,4 +119,4 @@ class TagLossModule:
             loss_weight = 1.0 + self.strength * (loss_weight - 1.0)
             weights.append(loss_weight)
             
-        return torch.tensor(weights, device=base_loss.device) 
+        return torch.tensor(weights, device=base_loss.device, dtype=base_loss.dtype) 
