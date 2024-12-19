@@ -191,6 +191,20 @@ class SupervisedFineTune(StableDiffusionModel):
                     "train/special_tags_count": special_tags_count
                 })
             
+            # 存储metrics供trainer使用
+            self.tag_loss_metrics = {
+                "train/base_loss": base_loss.mean().item(),
+                "train/base_loss_std": base_loss.std().item(),
+                "train/tag_loss_weight": weights.mean().item(),
+                "train/tag_loss_std": weights.std().item(),
+                "train/weighted_loss": (base_loss * weights).mean().item(),
+                "train/max_weight": weights.max().item(),
+                "train/min_weight": weights.min().item(),
+                "train/special_tags_count": sum(1 for prompt in batch["prompts"] 
+                                              for tag in prompt.split(",") 
+                                              if self.tag_loss_module.check_fn(tag.strip()))
+            }
+            
             return (base_loss * weights).mean()
         
         return base_loss.mean()

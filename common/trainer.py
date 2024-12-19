@@ -368,6 +368,12 @@ class Trainer:
                     "train/avg_loss": loss_rec.avg,
                     "trainer/step_t": time.perf_counter() - local_timer,
                 }
+                
+                # 添加tag loss相关指标到metrics
+                if hasattr(self.model, "tag_loss_module"):
+                    tag_metrics = getattr(self.model, "tag_loss_metrics", {})
+                    metrics.update(tag_metrics)
+                    
                 epoch_metrics = {
                     "train/epoch_avg_loss": loss_rec.avg,
                     "epoch": self.current_epoch
