@@ -162,7 +162,7 @@ class SupervisedFineTune(StableDiffusionModel):
             
             # 计算权重并应用
             weights = self.tag_loss_module.calculate_loss_weights(
-                batch["prompt"],  # 假设prompt在batch中
+                batch["prompts"],  # 假设prompt在batch中
                 base_loss.detach()
             )
             
