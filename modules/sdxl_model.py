@@ -238,13 +238,15 @@ class StableDiffusionModel(pl.LightningModule):
 
         self.model.train()
 
-        if config.get("use_wandb", False) and "CSVLogger" != logger.__class__.__name__:
+        if config.get("use_wandb", False) and logger and "CSVLogger" != logger.__class__.__name__:
             try:
-                logger.log_image(
-                    key="samples", images=images, caption=prompts, step=global_step
-                )
+                import wandb
+                if wandb.run is not None:
+                    logger.log_image(
+                        key="samples", images=images, caption=prompts, step=global_step
+                    )
             except:
-                # 忽略wandb相关错误
+                # 完全忽略所有wandb相关错误
                 pass
 
     @torch.inference_mode()

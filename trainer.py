@@ -28,12 +28,16 @@ def main():
         strategy = get_class(strategy)(**_params)
 
     loggers = pl.fabric.loggers.CSVLogger(".")
-    if config.trainer.wandb_id != "":
-        from lightning.pytorch.loggers import WandbLogger
-        kwargs = dict(project=config.trainer.wandb_id)
-        if config.trainer.get("wandb_entity", None):
-            kwargs["entity"] = config.trainer.wandb_entity
-        loggers = WandbLogger(**kwargs)
+    if config.trainer.get("use_wandb", False) and config.trainer.wandb_id != "":
+        try:
+            from lightning.pytorch.loggers import WandbLogger
+            kwargs = dict(project=config.trainer.wandb_id)
+            if config.trainer.get("wandb_entity", None):
+                kwargs["entity"] = config.trainer.wandb_entity
+            loggers = WandbLogger(**kwargs)
+        except:
+            print("Warning: Failed to initialize WandB. Falling back to CSVLogger.")
+            pass  # 保持使用CSVLogger
         
     if config.lightning.precision == "16-true-scaled":
         config.lightning.precision = None
