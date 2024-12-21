@@ -28,7 +28,7 @@ def main():
         strategy = get_class(strategy)(**_params)
 
     loggers = pl.fabric.loggers.CSVLogger(".")
-    if config.trainer.get("use_wandb", False) and config.trainer.wandb_id != "":
+    if config.sampling.get("use_wandb", False) and config.trainer.wandb_id != "":
         try:
             from lightning.pytorch.loggers import WandbLogger
             kwargs = dict(project=config.trainer.wandb_id)
