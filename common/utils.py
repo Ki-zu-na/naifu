@@ -173,8 +173,8 @@ def get_latest_checkpoint(checkpoint_dir: str):
     if not os.path.isdir(checkpoint_dir):
         return None
     items = sorted(os.listdir(checkpoint_dir))
-    # remove all _optimizer.pt
-    items = [x for x in items if "_optimizer" not in x]
+    # 移除所有 _optimizer.pt 和 _full_state.pt 文件
+    items = [x for x in items if not ("_optimizer" in x or "_full_state" in x)]
     if not items:
         return None
     return os.path.join(checkpoint_dir, items[-1])

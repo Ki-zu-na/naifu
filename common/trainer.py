@@ -110,6 +110,7 @@ class Trainer:
         ckpt_st = cfg.checkpoint_steps
         ckpt_fq = cfg.checkpoint_freq
         ckpt_dir = cfg.checkpoint_dir
+        max_ckpts = cfg.get("max_checkpoints", -1)
 
         is_ckpt_step = ckpt_st > 0 and self.global_step % ckpt_st == 0
         is_ckpt_epoch = ckpt_fq > 0 and self.current_epoch % ckpt_fq == 0
@@ -130,7 +131,27 @@ class Trainer:
             "current_epoch": str(self.current_epoch),
         }
         
-        # 保存完整训练状态
+        if max_ckpts > 0:
+            existing_ckpts = []
+            for f in os.listdir(ckpt_dir):
+                if f.startswith("checkpoint-") and f.endswith(".ckpt"):
+                    ckpt_path = os.path.join(ckpt_dir, f)
+                    state_path = ckpt_path.replace(".ckpt", "_full_state.pt")
+                    existing_ckpts.append((ckpt_path, os.path.getmtime(ckpt_path)))
+            
+            existing_ckpts.sort(key=lambda x: x[1])
+            
+            while len(existing_ckpts) >= max_ckpts:
+                oldest_ckpt, _ = existing_ckpts.pop(0)
+                if os.path.exists(oldest_ckpt):
+                    os.remove(oldest_ckpt)
+                    logger.info(f"Removed old checkpoint: {oldest_ckpt}")
+                
+                state_path = oldest_ckpt.replace(".ckpt", "_full_state.pt")
+                if os.path.exists(state_path):
+                    os.remove(state_path)
+                    logger.info(f"Removed old state file: {state_path}")
+        
         if not save_weights_only:
             full_state = {
                 "model": self.model.state_dict(),
@@ -147,10 +168,7 @@ class Trainer:
             logger.info(f"Saving model state to {model_path}_full_state.pt")
         
         self.model.save_checkpoint(model_path, metadata)
-        if not save_weights_only:
-            optimizer_state = {"optimizer": self.optimizer, **metadata}
-            self.fabric.save(model_path + "_optimizer.pt", optimizer_state)
-            
+        
         if "schedulefree" in self.optimizer.__class__.__name__.lower():
             self.optimizer.train()
 
@@ -290,13 +308,12 @@ class Trainer:
                     
                     logger.info(f"成功恢复训练状态到步数 {self.global_step} 和轮数 {self.current_epoch}")
                 else:
-                    # 回退到现有的恢复逻辑
-                    # 首先尝试从文件名中获取信息
-                    match = re.search(r'checkpoint-e(\d+)_s(\d+)', os.path.basename(latest_ckpt))
+                    # 修改正则表达式以匹配两种文件格式
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_full_state)?(?:\.ckpt|\.pt)', os.path.basename(latest_ckpt))
                     if match:
                         self.current_epoch = int(match.group(1))
                         self.global_step = int(match.group(2))
-                        logger.info(f"Extracted epoch {self.current_epoch} and step {self.global_step} from checkpoint filename")
+                        logger.info(f"从文件名提取训练状态：轮数 {self.current_epoch}，步数 {self.global_step}")
                     
                     # 然后尝试从优化器状态或checkpoint中获取信息
                     opt_name = Path(latest_ckpt).stem + "_optimizer"
