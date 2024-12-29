@@ -104,7 +104,7 @@ class SupervisedFineTune(StableDiffusionModel):
             from modules.losses.tag_loss import TagLossModule
             
             def is_special_tag(tag: str) -> bool:
-                return tag.startswith(("artist:", "character:", "style:"))
+                return tag.startswith(("artist:", "character:", "rating:"))
             
             self.tag_loss_module = TagLossModule(
                 check_fn=is_special_tag,

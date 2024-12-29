@@ -313,7 +313,21 @@ class LatentStore(StoreBase):
 class DirectoryImageStore(StoreBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        label_ext = self.kwargs.get("label_ext", ".txt")
+        # 获取配置参数
+        self.label_ext = self.kwargs.get("label_ext", ".txt")  # 文本文件扩展名
+        self.jsonl_path = self.kwargs.get("jsonl_path", None)  # jsonl文件路径
+        self.json_data = {}
+        
+        # 如果提供了jsonl路径,则加载jsonl数据
+        if self.jsonl_path:
+            with open(self.jsonl_path, 'r') as f:
+                for line in f:
+                    entry = json_lib.loads(line)
+                    # 使用图片路径作为key
+                    self.json_data[entry['image_path']] = {
+                        'caption_tag': entry.get('caption_tag', ''),
+                        'caption_nl': entry.get('caption_nl', '')
+                    }
         self.paths = list(dirwalk(self.root_path, is_img))
         self.length = len(self.paths)
         self.transforms = IMAGE_TRANSFORMS
@@ -346,7 +360,7 @@ class DirectoryImageStore(StoreBase):
             leave=False,
             ascii=True,
         ):
-            p = path.with_suffix(label_ext)
+            p = path.with_suffix(self.label_ext)
             try:
                 with open(p, "r") as f:
                     self.prompts.append(f.read())
@@ -364,12 +378,38 @@ class DirectoryImageStore(StoreBase):
 
     def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         p = self.paths[index]
-        prompt = self.prompts[index]
+        
+        # 根据是否有jsonl文件选择不同的处理方式
+        if self.jsonl_path:
+            # 从jsonl数据中获取caption
+            img_path = str(p)
+            if img_path in self.json_data:
+                data = self.json_data[img_path]
+                prompt = data['caption_tag']  # 使用caption_tag作为主prompt
+                extras = {
+                    
+                    'caption_tag': data['caption_tag'],
+                    'caption_nl': data['caption_nl']
+                }
+            else:
+                prompt = ''
+                extras = {}
+        else:
+            # 从txt文件读取prompt
+            try:
+                with open(p.with_suffix(self.label_ext), "r") as f:
+                    prompt = f.read()
+                extras = {}
+            except Exception as e:
+                logger.warning(f"跳过: 处理{p}时出错: {e}")
+                prompt = ""
+                extras = {}
+
+        # 处理图片
         _img = Image.open(p)
         if _img.mode == "RGB":
             img = np.array(_img)
         elif _img.mode == "RGBA":
-            # transparent images
             baimg = Image.new('RGB', _img.size, (255, 255, 255))
             baimg.paste(_img, (0, 0), _img)
             img = np.array(baimg)
@@ -379,12 +419,5 @@ class DirectoryImageStore(StoreBase):
         img = self.transforms(img)
         h, w = img.shape[-2:]
         dhdw = (0, 0)
-        
-        # 获取额外信息
-        extras = self.get_batch_extras(p)
-        
-        # 添加必要的信息到 extras
-        extras['train_caption_dan'] = extras.get('train_caption_dan', prompt)
-        extras['train_caption_native'] = extras.get('train_caption_native', prompt)
 
         return False, img, prompt, (h, w), dhdw, extras

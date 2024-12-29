@@ -136,7 +136,7 @@ class Trainer:
             for f in os.listdir(ckpt_dir):
                 if f.startswith("checkpoint-") and f.endswith(".ckpt"):
                     ckpt_path = os.path.join(ckpt_dir, f)
-                    state_path = ckpt_path.replace(".ckpt", "_full_state.pt")
+                    state_path = ckpt_path.replace(".ckpt", "_state.pt")
                     existing_ckpts.append((ckpt_path, os.path.getmtime(ckpt_path)))
             
             existing_ckpts.sort(key=lambda x: x[1])
@@ -147,25 +147,22 @@ class Trainer:
                     os.remove(oldest_ckpt)
                     logger.info(f"Removed old checkpoint: {oldest_ckpt}")
                 
-                state_path = oldest_ckpt.replace(".ckpt", "_full_state.pt")
+                state_path = oldest_ckpt.replace(".ckpt", "_state.pt")
                 if os.path.exists(state_path):
                     os.remove(state_path)
                     logger.info(f"Removed old state file: {state_path}")
         
         if not save_weights_only:
-            full_state = {
+            state = {
                 "model": self.model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "scheduler": self.scheduler.state_dict() if self.scheduler else None,
                 "global_step": self.global_step,
                 "current_epoch": self.current_epoch,
-                "rng_state": {
-                    "torch": torch.get_rng_state(),
-                    "cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-                }
+
             }
-            self.fabric.save(model_path + "_full_state.pt", full_state)
-            logger.info(f"Saving model state to {model_path}_full_state.pt")
+            self.fabric.save(model_path + "_state.pt", state)
+            logger.info(f"Saving model state to {model_path}_state.pt")
         
         self.model.save_checkpoint(model_path, metadata)
         
@@ -282,34 +279,28 @@ class Trainer:
 
         if cfg.get("resume"):
             if latest_ckpt:
-                full_state_path = latest_ckpt.replace(".ckpt", "_full_state.pt")
-                if os.path.exists(full_state_path):
-                    logger.info(f"从完整状态文件恢复训练: {full_state_path}")
-                    full_state = self.fabric.load(full_state_path)
+                state_path = latest_ckpt.replace(".ckpt", "_state.pt")
+                if os.path.exists(state_path):
+                    logger.info(f"从完整状态文件恢复训练: {state_path}")
+                    state = self.fabric.load(state_path)
                     
                     # 恢复模型状态
-                    self.model.load_state_dict(full_state["model"])
-                    
+                    self.model.load_state_dict(state["model"])
                     # 恢复优化器状态
-                    self.optimizer.load_state_dict(full_state["optimizer"])
-                    
+                    self.optimizer.load_state_dict(state["optimizer"])
                     # 恢复调度器状态
-                    if self.scheduler and full_state["scheduler"]:
-                        self.scheduler.load_state_dict(full_state["scheduler"])
+                    if self.scheduler and state["scheduler"]:
+                        self.scheduler.load_state_dict(state["scheduler"])
                     
                     # 恢复训练步数和轮数
-                    self.global_step = full_state["global_step"]
-                    self.current_epoch = full_state["current_epoch"]
+                    self.global_step = state["global_step"]
+                    self.current_epoch = state["current_epoch"]
                     
-                    # 恢复随机数生成器状态
-                    torch.set_rng_state(full_state["rng_state"]["torch"])
-                    if torch.cuda.is_available() and full_state["rng_state"]["cuda"] is not None:
-                        torch.cuda.set_rng_state(full_state["rng_state"]["cuda"])
                     
                     logger.info(f"成功恢复训练状态到步数 {self.global_step} 和轮数 {self.current_epoch}")
                 else:
                     # 修改正则表达式以匹配两种文件格式
-                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_full_state)?(?:\.ckpt|\.pt)', os.path.basename(latest_ckpt))
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt)', os.path.basename(latest_ckpt))
                     if match:
                         self.current_epoch = int(match.group(1))
                         self.global_step = int(match.group(2))
