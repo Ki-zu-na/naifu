@@ -221,34 +221,34 @@ class Trainer:
         cfg = config.trainer
         target_device = fabric.device
         
-        # 在训练开始时将模型移至目标设备
-        def move_to_device(model):
-            if hasattr(model, 'to'):
-                return model.to(target_device)
-            return model
+        # # 在训练开始时将模型移至目标设备
+        # def move_to_device(model):
+        #     if hasattr(model, 'to'):
+        #         return model.to(target_device)
+        #     return model
 
-        # 移动主要模型组件
-        self.model = move_to_device(self.model)
-        if hasattr(self.model, 'first_stage_model'):
-            self.model.first_stage_model = move_to_device(self.model.first_stage_model)
-        if hasattr(self.model, 'model'):
-            self.model.model = move_to_device(self.model.model)
-        if hasattr(self.model, 'unet_ref'):
-            self.model.unet_ref = move_to_device(self.model.unet_ref)
+        # # 移动主要模型组件
+        # self.model = move_to_device(self.model)
+        # if hasattr(self.model, 'first_stage_model'):
+        #     self.model.first_stage_model = move_to_device(self.model.first_stage_model)
+        # if hasattr(self.model, 'model'):
+        #     self.model.model = move_to_device(self.model.model)
+        # if hasattr(self.model, 'unet_ref'):
+        #     self.model.unet_ref = move_to_device(self.model.unet_ref)
         
-        # 移动 LyCORIS 相关组件
-        if hasattr(self.model, 'lycoris_unet'):
-            self.model.lycoris_unet = move_to_device(self.model.lycoris_unet)
-        if hasattr(self.model, 'lycoris_te1'):
-            self.model.lycoris_te1 = move_to_device(self.model.lycoris_te1)
-        if hasattr(self.model, 'lycoris_te2'):
-            self.model.lycoris_te2 = move_to_device(self.model.lycoris_te2)
+        # # 移动 LyCORIS 相关组件
+        # if hasattr(self.model, 'lycoris_unet'):
+        #     self.model.lycoris_unet = move_to_device(self.model.lycoris_unet)
+        # if hasattr(self.model, 'lycoris_te1'):
+        #     self.model.lycoris_te1 = move_to_device(self.model.lycoris_te1)
+        # if hasattr(self.model, 'lycoris_te2'):
+        #     self.model.lycoris_te2 = move_to_device(self.model.lycoris_te2)
         
-        # 移动文本编码器
-        if hasattr(self.model, 'text_encoder_1'):
-            self.model.text_encoder_1 = move_to_device(self.model.text_encoder_1)
-        if hasattr(self.model, 'text_encoder_2'):
-            self.model.text_encoder_2 = move_to_device(self.model.text_encoder_2)
+        # # 移动文本编码器
+        # if hasattr(self.model, 'text_encoder_1'):
+        #     self.model.text_encoder_1 = move_to_device(self.model.text_encoder_1)
+        # if hasattr(self.model, 'text_encoder_2'):
+        #     self.model.text_encoder_2 = move_to_device(self.model.text_encoder_2)
 
         grad_accum_steps = cfg.accumulate_grad_batches
         grad_clip_val = cfg.gradient_clip_val
@@ -349,14 +349,14 @@ class Trainer:
             logger.info(f"Starting training from epoch {self.current_epoch} and step {self.global_step}")
 
         # 添加一个批次处理函数来确保数据在正确的设备上
-        def process_batch(batch):
-            if isinstance(batch, torch.Tensor):
-                return batch.to(target_device)
-            elif isinstance(batch, dict):
-                return {k: process_batch(v) for k, v in batch.items()}
-            elif isinstance(batch, (list, tuple)):
-                return type(batch)(process_batch(x) for x in batch)
-            return batch
+        # def process_batch(batch):
+        #     if isinstance(batch, torch.Tensor):
+        #         return batch.to(target_device)
+        #     elif isinstance(batch, dict):
+        #         return {k: process_batch(v) for k, v in batch.items()}
+        #     elif isinstance(batch, (list, tuple)):
+        #         return type(batch)(process_batch(x) for x in batch)
+        #     return batch
 
         should_stop = False
         if cfg.max_epochs > 0 and self.current_epoch >= cfg.max_epochs:
@@ -384,7 +384,7 @@ class Trainer:
                 self.optimizer.train()
 
             for batch_idx, batch in enumerate(self.dataloader):  
-                batch = process_batch(batch)
+                # batch = process_batch(batch)
                 # Skip the completed steps in the current epoch
                 local_acc_step = batch_idx // grad_accum_steps + 1
                 if self.current_epoch == resume_epoch and local_acc_step < resume_step:
