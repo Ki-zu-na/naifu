@@ -1,11 +1,16 @@
 import safetensors
 import torch
-import os
+import os, math
 import lightning as pl
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
+
+import torch.distributed as dist
+from tqdm import tqdm
+from pathlib import Path
 from modules.sdxl_model import StableDiffusionModel
+from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
@@ -80,25 +85,16 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         model.mark_forward_method('generate_samples')            
         
     dataloader = fabric.setup_dataloaders(dataloader)
+        
+    # set here; 
     model._fabric_wrapped = fabric
     return model, dataset, dataloader, optimizer, scheduler
 
-def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
-    sigmas = sch.sigmas.to(device=device, dtype=dtype)
-    schedule_timesteps = sch.timesteps.to(device)
-    timesteps = timesteps.to(device)
-
-    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
-
-    sigma = sigmas[step_indices].flatten()
-    while len(sigma.shape) < n_dim:
-        sigma = sigma.unsqueeze(-1)
-    return sigma
 
 class SupervisedFineTune(StableDiffusionModel):  
     def init_model(self):
         super().init_model()
-        
+
         # 初始化tag loss模块
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
@@ -113,7 +109,7 @@ class SupervisedFineTune(StableDiffusionModel):
                 strength=self.config.advanced.get("tag_loss_strength", 1.0),
                 tag_rewards=self.config.advanced.get("tag_rewards", {})
             )
-    
+
     def forward(self, batch):
         advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
@@ -132,29 +128,16 @@ class SupervisedFineTune(StableDiffusionModel):
 
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
+        sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
         
-        # 使用独立的 get_sigmas 函数
-        scheduler_device = self.noise_scheduler.timesteps.device
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
-        u = torch.nn.functional.sigmoid(u)
-        indices = (u * 1000).long()
-        timesteps = self.noise_scheduler.timesteps[indices]  # 在同一设备上索引
-        timesteps = timesteps.to(device=latents.device) 
-        
-        sigmas = get_sigmas(
-            self.noise_scheduler, 
-            timesteps, 
-            n_dim=latents.ndim, 
-            dtype=latents.dtype, 
-            device=latents.device
-        )
-        
+        timesteps = (sigmas * 1000.0) # maybe better to use discrete timesteps
+        sigmas = sigmas.view(-1, 1, 1, 1)
         noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
         target = noise - latents
+
         base_loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1)
-        
         
         # 应用tag loss
         if hasattr(self, "tag_loss_module"):
