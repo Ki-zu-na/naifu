@@ -46,14 +46,14 @@ def shuffle_prompts_sdstyle(e: Entry):
     # constants
     shuffle_caption = True
     token_warmup_step = 0  # unsupported
-    caption_tag_dropout_rate = 0.25
+    caption_tag_dropout_rate = 0.15
     caption_separator = ","
     keep_tokens_separator = "|||"
     replacements = {}
     
     # New parameters for dropping all tags before or after keep_tokens_separator
-    drop_all_fixed_prob = 0.15  # Probability to drop all fixed tokens
-    drop_all_flex_prob = 0.35    # Probability to drop all flex tokens
+    drop_all_fixed_prob = 0.05  # Probability to drop all fixed tokens
+    drop_all_flex_prob = 0.15    # Probability to drop all flex tokens
     
     # New parameter for dropping the first tag when there's no keep_tokens_separator
     drop_first_tag_prob = 0.05   # Probability to drop the first tag when there's no separator
