@@ -65,7 +65,6 @@ sdxl_ds_strategy = DeepSpeedStrategy(
             "overlap_comm": True,
         },
         "zero_allow_untested_optimizer": True,
-        "wall_clock_breakdown": True,
     }
 )   
 
@@ -89,7 +88,6 @@ sdxl_ds_strategy_s2 = DeepSpeedStrategy(
             "overlap_comm": True,
         },
         "zero_allow_untested_optimizer": True,
-        "wall_clock_breakdown": True,
     }
 )   
 
