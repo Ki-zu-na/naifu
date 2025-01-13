@@ -87,7 +87,7 @@ class StableDiffusionModel(pl.LightningModule):
             num_train_timesteps=1000,
             clip_sample=False,
         )
-
+        self.model.requires_grad_(True)
         # allow custom class
         if self.config.get("noise_scheduler"):
             scheduler_cls = get_class(self.config.noise_scheduler.name)
