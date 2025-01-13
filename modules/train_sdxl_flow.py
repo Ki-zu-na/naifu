@@ -88,6 +88,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         
     # set here; 
     model._fabric_wrapped = fabric
+    model.model.requires_grad_(True)
     return model, dataset, dataloader, optimizer, scheduler
 
 

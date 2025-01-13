@@ -81,6 +81,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         
     dataloader = fabric.setup_dataloaders(dataloader)
     model._fabric_wrapped = fabric
+    model.model.requires_grad_(True)
     return model, dataset, dataloader, optimizer, scheduler
 
 def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
