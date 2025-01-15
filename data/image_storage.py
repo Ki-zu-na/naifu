@@ -14,6 +14,9 @@ from typing import Callable, Generator, Optional  # type: ignore
 from torchvision import transforms
 from common.logging import logger
 
+from data.processors import shuffle_prompts_dan_native_style
+from functools import partial
+
 json_lib = json
 try:
     import rapidjson as json_lib
@@ -81,7 +84,7 @@ class StoreBase(Dataset):
         root_path,
         rank=0,
         dtype=torch.float16,
-        process_batch_fn = "data.processors.identical",
+        process_batch_fn = "data.processors.shuffle_prompts_dan_native_style",
         **kwargs,
     ):
         self.rank = rank
@@ -173,7 +176,7 @@ class StoreBase(Dataset):
         raise NotImplementedError
 
     def get_batch_extras(self, path):
-        return None
+        return {}
 
     def process_batch(self, inputs: Entry):
         if isinstance(self.process_batch_fn, str):
@@ -241,7 +244,7 @@ class LatentStore(StoreBase):
             for k in fs.keys():
                 hashkey = k[:-8]  # ".latents"
                 if hashkey not in prompt_mapping:
-                    logger.warning(f"Key {k} not found in prompt_mapping")
+                    #logger.warning(f"Key {k} not found in prompt_mapping")
                     continue
                 
                 it = prompt_mapping[hashkey]
@@ -265,7 +268,20 @@ class LatentStore(StoreBase):
         if new_length != self.length:
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
+
+        # 设置 dan_probability，可以从 kwargs 中获取或使用默认值
+        dan_probability = kwargs.get('dan_probability', 0.7)
         
+        # 创建一个偏函数，固定 dan_probability 参数
+        self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
+
+
+    def setup_filehandles(self):
+        self.h5_filehandles = {}
+        for h5_path in self.h5_paths:
+            self.h5_filehandles[h5_path] = h5.File(h5_path, "r", libver="latest")
+
+    
     def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         if len(self.h5_filehandles) == 0:
             self.setup_filehandles()
@@ -294,36 +310,24 @@ class LatentStore(StoreBase):
         return True, latent, prompt, original_size, dhdw, extras
 
 
-    def setup_filehandles(self):
-        self.h5_filehandles = {}
-        for h5_path in self.h5_paths:
-            self.h5_filehandles[h5_path] = h5.File(h5_path, "r", libver="latest")
-
-    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, (int, int)]:
-        if len(self.h5_filehandles) == 0:
-            self.setup_filehandles()
-            
-        latent_key = self.keys[index]
-        h5_path, entry, original_size = self.h5_keymap[latent_key]
-        
-        # modify here if you want to use a different format
-        prompt = entry["train_caption"]
-        latent = torch.asarray(self.h5_filehandles[h5_path][latent_key][:]).float()
-        dhdw = self.h5_filehandles[h5_path][latent_key].attrs.get("dhdw", (0, 0))
-    
-        # if scaled, we need to unscale the latent (training process will scale it back)
-        scaled = self.h5_filehandles[h5_path][latent_key].attrs.get("scale", True)
-        if scaled:
-            latent = 1.0 / self.scale_factor * latent
-
-        extras = self.get_batch_extras(self.paths[index])
-        return True, latent, prompt, original_size, dhdw, extras
-
-
 class DirectoryImageStore(StoreBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        label_ext = self.kwargs.get("label_ext", ".txt")
+        # 获取配置参数
+        self.label_ext = self.kwargs.get("label_ext", ".txt")  # 文本文件扩展名
+        self.jsonl_path = self.kwargs.get("jsonl_path", None)  # jsonl文件路径
+        self.json_data = {}
+        
+        # 如果提供了jsonl路径,则加载jsonl数据
+        if self.jsonl_path:
+            with open(self.jsonl_path, 'r') as f:
+                for line in f:
+                    entry = json_lib.loads(line)
+                    # 使用图片路径作为key
+                    self.json_data[entry['image_path']] = {
+                        'caption_tag': entry.get('caption_tag', ''),
+                        'caption_nl': entry.get('caption_nl', '')
+                    }
         self.paths = list(dirwalk(self.root_path, is_img))
         self.length = len(self.paths)
         self.transforms = IMAGE_TRANSFORMS
@@ -356,7 +360,7 @@ class DirectoryImageStore(StoreBase):
             leave=False,
             ascii=True,
         ):
-            p = path.with_suffix(label_ext)
+            p = path.with_suffix(self.label_ext)
             try:
                 with open(p, "r") as f:
                     self.prompts.append(f.read())
@@ -372,14 +376,40 @@ class DirectoryImageStore(StoreBase):
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
 
-    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, (int, int)]:
+    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         p = self.paths[index]
-        prompt = self.prompts[index]
+        
+        # 根据是否有jsonl文件选择不同的处理方式
+        if self.jsonl_path:
+            # 从jsonl数据中获取caption
+            img_path = str(p)
+            if img_path in self.json_data:
+                data = self.json_data[img_path]
+                prompt = data['caption_tag']  # 使用caption_tag作为主prompt
+                extras = {
+                    
+                    'caption_tag': data['caption_tag'],
+                    'caption_nl': data['caption_nl']
+                }
+            else:
+                prompt = ''
+                extras = {}
+        else:
+            # 从txt文件读取prompt
+            try:
+                with open(p.with_suffix(self.label_ext), "r") as f:
+                    prompt = f.read()
+                extras = {}
+            except Exception as e:
+                logger.warning(f"跳过: 处理{p}时出错: {e}")
+                prompt = ""
+                extras = {}
+
+        # 处理图片
         _img = Image.open(p)
         if _img.mode == "RGB":
             img = np.array(_img)
         elif _img.mode == "RGBA":
-            # transparent images
             baimg = Image.new('RGB', _img.size, (255, 255, 255))
             baimg.paste(_img, (0, 0), _img)
             img = np.array(baimg)
@@ -389,5 +419,5 @@ class DirectoryImageStore(StoreBase):
         img = self.transforms(img)
         h, w = img.shape[-2:]
         dhdw = (0, 0)
-        extras = self.get_batch_extras(p)
+
         return False, img, prompt, (h, w), dhdw, extras
