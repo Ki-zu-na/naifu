@@ -265,6 +265,34 @@ class LatentStore(StoreBase):
         if new_length != self.length:
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
+        
+    def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
+        if len(self.h5_filehandles) == 0:
+            self.setup_filehandles()
+            
+        latent_key = self.keys[index]
+        h5_path, entry, original_size = self.h5_keymap[latent_key]
+        
+        # 获取原始 prompt
+        prompt = entry["train_caption"]
+
+        latent = torch.asarray(self.h5_filehandles[h5_path][latent_key][:]).float()
+        dhdw = self.h5_filehandles[h5_path][latent_key].attrs.get("dhdw", (0, 0))
+
+        # if scaled, we need to unscale the latent (training process will scale it back)
+        scaled = self.h5_filehandles[h5_path][latent_key].attrs.get("scale", True)
+        if scaled:
+            latent = 1.0 / self.scale_factor * latent
+
+        # 获取额外信息
+        extras = self.get_batch_extras(self.paths[index])
+        
+        # 添加必要的信息到 extras
+        extras['train_caption_dan'] = entry.get('train_caption_dan', prompt)
+        extras['train_caption_native'] = entry.get('train_caption_native', prompt)
+
+        return True, latent, prompt, original_size, dhdw, extras
+
 
     def setup_filehandles(self):
         self.h5_filehandles = {}
