@@ -20,6 +20,7 @@ einops
 scipy
 opencv-python
 
+pytorch-optimizer
 # python-rapidjson
 # xformers==0.0.22.post7
 # fairscale
