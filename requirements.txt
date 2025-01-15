@@ -2,12 +2,13 @@ numpy
 accelerate
 lightning>=2.0
 omegaconf>=2.1.1
-transformers>=4.25.1
+transformers>=4.43.0
 datasets>=2.17
-diffusers>=0.18
+diffusers>=0.29
 bitsandbytes>=0.41
 wandb
 ftfy
+
 torchvision
 requests
 timm
@@ -19,9 +20,10 @@ einops
 scipy
 opencv-python
 
+pytorch-optimizer
 # python-rapidjson
 # xformers==0.0.22.post7
 # fairscale
 # prodigyopt
-# xformers
+#xformers
 # tensorboard
