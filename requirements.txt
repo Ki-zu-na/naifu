@@ -8,6 +8,7 @@ diffusers>=0.29
 bitsandbytes>=0.41
 wandb
 ftfy
+xformers
 
 torchvision
 requests
@@ -20,9 +21,9 @@ einops
 scipy
 opencv-python
 
-pytorch-optimizer
+#pytorch-optimizer
 # python-rapidjson
-# xformers==0.0.22.post7
+
 # fairscale
 # prodigyopt
 #xformers
