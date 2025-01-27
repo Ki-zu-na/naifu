@@ -57,6 +57,7 @@ def shuffle_prompts_sdstyle(e: Entry):
     
     # New parameter for dropping the first tag when there's no keep_tokens_separator
     drop_first_tag_prob = 0.05   # Probability to drop the first tag when there's no separator
+    drop_second_tag_prob = 0.15   # Probability to drop the first tag when there's no separator
 
     if keep_tokens_separator not in e.prompt:
         # Handle the case when there's no keep_tokens_separator
@@ -74,6 +75,10 @@ def shuffle_prompts_sdstyle(e: Entry):
     fixed_tokens = [t.strip() for t in fixed_part.split(caption_separator) if t.strip()]
     flex_tokens = [t.strip() for t in flex_part.split(caption_separator) if t.strip()]
 
+    drop_second_tag = random.random() < drop_second_tag_prob
+    if len(fixed_tokens) >= 2 and drop_second_tag:
+        fixed_tokens = fixed_tokens[:1] + fixed_tokens[2:] 
+
     # Decide whether to drop all fixed or flex tokens
     drop_all_fixed = random.random() < drop_all_fixed_prob
     drop_all_flex = random.random() < drop_all_flex_prob
@@ -83,6 +88,7 @@ def shuffle_prompts_sdstyle(e: Entry):
     else:
         if shuffle_caption:
             random.shuffle(fixed_tokens) 
+        
         # Apply individual token dropout to fixed tokens
         fixed_tokens = dropout_tags(fixed_tokens, caption_tag_dropout_rate)
 
