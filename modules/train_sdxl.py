@@ -178,52 +178,52 @@ class SupervisedFineTune(StableDiffusionModel):
         if hasattr(self, "tag_loss_module"):
             # 更新全局步数
             self.tag_loss_module.global_step = self.global_step
+            # 计算权重并应用
+            weights = self.tag_loss_module.calculate_loss_weights(
+                batch["prompts"],
+                base_loss.detach()
+            )
             
-            if min_snr_gamma:
-                base_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-                base_loss = base_loss.mean([1, 2, 3])  # 保持每个样本的损失独立
-                
-                # 计算权重并应用
-                weights = self.tag_loss_module.calculate_loss_weights(
-                    batch["prompts"],
-                    base_loss.detach()
-                )
-                
-                # 记录详细的日志
-                if hasattr(self, "log_dict"):
-                    self.log_dict({
-                        "train/base_loss": base_loss.mean().item(),
-                        "train/base_loss_std": base_loss.std().item(),
-                        "train/tag_loss_weight": weights.mean().item(),
-                        "train/tag_loss_std": weights.std().item(),
-                        "train/weighted_loss": (base_loss * weights).mean().item(),
-                        "train/max_weight": weights.max().item(),
-                        "train/min_weight": weights.min().item()
-                    })
-                    
-                    # 记录特殊标签的数量
-                    special_tags_count = sum(1 for prompt in batch["prompts"] 
-                                          for tag in prompt.split(",") 
-                                          if self.tag_loss_module.check_fn(tag.strip()))
-                    self.log_dict({
-                        "train/special_tags_count": special_tags_count
-                    })
-                
-                # 存储metrics供trainer使用
-                self.tag_loss_metrics = {
+            # 记录详细的日志
+            if hasattr(self, "log_dict"):
+                self.log_dict({
                     "train/base_loss": base_loss.mean().item(),
-                    "train/base_loss_std": base_loss.std().item(),
                     "train/tag_loss_weight": weights.mean().item(),
-                    "train/tag_loss_std": weights.std().item(),
                     "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
-                    "train/min_weight": weights.min().item(),
-                    "train/special_tags_count": special_tags_count
-                }
+                    "train/min_weight": weights.min().item()
+                })
                 
+                # 记录特殊标签的数量
+                special_tags_count = sum(1 for prompt in batch["prompts"] 
+                                        for tag in prompt.split(",") 
+                                        if self.tag_loss_module.check_fn(tag.strip()))
+                self.log_dict({
+                    "train/special_tags_count": special_tags_count
+                })
+            
+            # 存储metrics供trainer使用
+            self.tag_loss_metrics = {
+                "train/base_loss": base_loss.mean().item(),
+                "train/tag_loss_weight": weights.mean().item(),
+                "train/weighted_loss": (base_loss * weights).mean().item(),
+                "train/max_weight": weights.max().item(),
+                "train/min_weight": weights.min().item(),
+                "train/special_tags_count": special_tags_count
+            }
+
                 # 应用SNR权重和其他权重
-                if min_snr_gamma:
-                    base_loss = apply_snr_weight(base_loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+            if advanced.get("min_snr", False):
+                base_loss = apply_snr_weight(base_loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
+
+                noise_pred = self.model(noisy_latents, timesteps, cond)
+
+                # Get the target for loss depending on the prediction type
+                is_v = advanced.get("v_parameterization", False)
+                if is_v:
+                    target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+                else:
+                    target = noise
                 
                 snr_t = torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps])
                 snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)

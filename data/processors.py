@@ -162,3 +162,88 @@ def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float =
     
     # Apply shuffle_prompts_sdstyle (assuming this function exists)
     return shuffle_prompts_sdstyle(new_entry)
+
+def process_prompts_with_metadata(
+    data_entry: Entry, 
+) -> Entry:
+    
+    shuffle_caption = True
+    # New parameters for dropping all tags before or after keep_tokens_separator
+    drop_all_fixed_prob = 0.05  # Probability to drop all fixed tokens
+    drop_all_flex_prob = 0.15    # Probability to drop all flex tokens
+    drop_artist_prob = 0.05
+    dropout_rate = 0.15
+    caption_nl_prob = 0.3
+    style_mix_prob = 0.5
+
+    if not data_entry.extras:
+        return data_entry
+    
+    extras = data_entry.extras
+
+    
+    fixed_tags = []
+    drop_artist = random.random() < drop_artist_prob
+    if 'tag_string_artist' in extras and extras['tag_string_artist'] and not drop_artist:
+        fixed_tags.append(extras['tag_string_artist'])
+    if 'tag_string_character' in extras and extras['tag_string_character']:
+        fixed_tags.append(extras['tag_string_character'])
+    if 'tag_string_copyright' in extras and extras['tag_string_copyright']:
+        fixed_tags.append(extras['tag_string_copyright'])
+
+    
+    flex_tags = []
+    caption_nl = random.random() < caption_nl_prob
+    style_mix = random.random() < style_mix_prob
+    if 'tag_string_general' in extras and extras['tag_string_general'] and not caption_nl:
+        flex_tags = [t.strip() for t in extras['tag_string_general'].split(",") if t.strip()]
+        if  'rating' in extras and extras['rating']:
+            if extras['rating'] == 'e':
+                flex_tags.append('explicit')
+            elif extras['rating'] == 's':
+                flex_tags.append('sensitive')
+            elif extras['rating'] == 'q':
+                flex_tags.append('questionable')
+            elif extras['rating'] == 'g':
+                flex_tags.append('safe')
+        if 'aes_rating' in extras and extras['aes_rating']:
+            flex_tags.append(extras['aes_rating'])
+        if 'tag_string_meta' in extras and extras['tag_string_meta']:
+            flex_tags.append(extras['tag_string_meta'])
+
+    elif 'regular_summary' in extras and extras['regular_summary'] and caption_nl:
+        if 'regular_summary' in extras and extras['regular_summary']:
+            flex_tags.append(extras['regular_summary'])
+        elif 'brief_summary' in extras and extras['brief_summary'] and style_mix:
+            flex_tags.append(extras['brief_summary'])
+
+
+
+    # Decide whether to drop all fixed or flex tokens
+    drop_all_fixed = random.random() < drop_all_fixed_prob
+    drop_all_flex = random.random() < drop_all_flex_prob
+
+    if drop_all_fixed:
+        fixed_tags = []
+
+    if drop_all_flex:
+        flex_tags = []
+    else:
+        flex_tags = dropout_tags(flex_tags, dropout_rate)
+    if shuffle_caption:
+        random.shuffle(fixed_tags)
+        random.shuffle(flex_tags)
+
+    new_prompt = ", ".join(fixed_tags + flex_tags)
+    
+
+    
+    return Entry(
+        is_latent=data_entry.is_latent,
+        pixel=data_entry.pixel,
+        prompt=new_prompt,
+        original_size=data_entry.original_size,
+        cropped_size=data_entry.cropped_size,
+        dhdw=data_entry.dhdw,
+        extras=extras
+    )

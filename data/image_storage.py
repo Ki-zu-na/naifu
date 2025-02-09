@@ -4,6 +4,8 @@ import json
 import h5py as h5
 import numpy as np
 import torch
+import tarfile
+import io
 
 from tqdm.auto import tqdm
 from dataclasses import dataclass
@@ -16,6 +18,7 @@ from common.logging import logger
 
 from data.processors import shuffle_prompts_dan_native_style
 from functools import partial
+
 
 json_lib = json
 try:
@@ -315,19 +318,17 @@ class DirectoryImageStore(StoreBase):
         super().__init__(*args, **kwargs)
         # 获取配置参数
         self.label_ext = self.kwargs.get("label_ext", ".txt")  # 文本文件扩展名
-        self.jsonl_path = self.kwargs.get("jsonl_path", None)  # jsonl文件路径
+        self.json_path = self.kwargs.get("json_path", None)  # json文件路径
         self.json_data = {}
         
-        # 如果提供了jsonl路径,则加载jsonl数据
-        if self.jsonl_path:
-            with open(self.jsonl_path, 'r') as f:
+        if self.json_path:
+            with open(self.json_path, 'r') as f:
                 for line in f:
                     entry = json_lib.loads(line)
-                    # 使用图片路径作为key
-                    self.json_data[entry['image_path']] = {
-                        'caption_tag': entry.get('caption_tag', ''),
-                        'caption_nl': entry.get('caption_nl', '')
-                    }
+                    img_path = entry['image_path']
+                    # 复制所有字段到extras，除了image_path
+                    self.json_data[img_path] = {k: v for k, v in entry.items() if k != 'image_path'}
+
         self.paths = list(dirwalk(self.root_path, is_img))
         self.length = len(self.paths)
         self.transforms = IMAGE_TRANSFORMS
@@ -379,18 +380,13 @@ class DirectoryImageStore(StoreBase):
     def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
         p = self.paths[index]
         
-        # 根据是否有jsonl文件选择不同的处理方式
         if self.jsonl_path:
-            # 从jsonl数据中获取caption
             img_path = str(p)
             if img_path in self.json_data:
                 data = self.json_data[img_path]
-                prompt = data['caption_tag']  # 使用caption_tag作为主prompt
-                extras = {
-                    
-                    'caption_tag': data['caption_tag'],
-                    'caption_nl': data['caption_nl']
-                }
+                prompt = data.get('tag_string_general', '')
+                # 将所有json字段存入extras
+                extras = data.copy()
             else:
                 prompt = ''
                 extras = {}
@@ -421,3 +417,108 @@ class DirectoryImageStore(StoreBase):
         dhdw = (0, 0)
 
         return False, img, prompt, (h, w), dhdw, extras
+
+class TarImageStore(StoreBase):
+    def __init__(self, root_path, *args, **kwargs):
+        """
+        For tar-based image storage, we do not need to scan a directory.
+        The 'root_path' can be a dummy value.
+        Required kwargs:
+          - tar_dirs: a list (or single value) of directories containing tar files.
+          - metadata_json: path to the JSON file containing image metadata.
+        """
+        super().__init__(root_path, *args, **kwargs)
+
+        # Retrieve tar_dirs and metadata_json from kwargs
+        self.tar_dirs = kwargs.pop("tar_dirs", [])
+        if not self.tar_dirs:
+            raise ValueError("tar_dirs parameter must be provided for TarImageStore.")
+        self.metadata_json = kwargs.pop("metadata_json", None)
+        if self.metadata_json is None:
+            raise ValueError("metadata_json parameter must be provided for TarImageStore.")
+
+        self.tar_index = {}  # mapping: filename -> (tar_path, TarInfo)
+        self.json_data = {}
+
+        # Load JSON metadata
+        try:
+            with open(self.metadata_json, "r") as f:
+                self.json_data = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Failed to load metadata JSON: {e}")
+
+        # Build tar index from tar_dirs
+        self._build_tar_index()
+
+        # Filter out valid entries based on keys in JSON and presence in tar index  
+        self.paths = [Path(name) for name in self.json_data.keys() if name in self.tar_index]
+        self.length = len(self.paths)
+        logger.debug(f"Filtered to {self.length} valid entries in TarImageStore.")
+
+        # Set transform (reuse IMAGE_TRANSFORMS)
+        self.transforms = IMAGE_TRANSFORMS
+
+    def _build_tar_index(self):
+        """Traverse tar directories and build index mapping file name to (tar_path, TarInfo).  
+        In case of duplicates, the first encountered entry is kept."""
+        if isinstance(self.tar_dirs, (str, Path)):
+            self.tar_dirs = [self.tar_dirs]
+
+        for tar_dir in self.tar_dirs:
+            tar_dir = Path(tar_dir)
+            for tar_path in tar_dir.glob("**/*.tar"):
+                try:
+                    with tarfile.open(tar_path, "r") as tf:
+                        for member in tf.getmembers():
+                            if member.isfile() and member.name in self.json_data:
+                                if member.name not in self.tar_index:
+                                    self.tar_index[member.name] = (tar_path, member)
+                                else:
+                                    logger.warning(f"Duplicate entry for {member.name} found in {tar_path}, skipping.")
+                except Exception as e:
+                    logger.error(f"Error processing tar file {tar_path}: {e}")
+
+    def get_raw_entry(self, index) -> tuple[bool, torch.Tensor, str, tuple[int, int], tuple[int, int], dict]:
+        # Get filename and metadata
+        filename = str(self.paths[index])
+        metadata = self.json_data.get(filename, {})
+
+        # Retrieve tar info from index
+        tar_info_pair = self.tar_index.get(filename, None)
+        if tar_info_pair is None:
+            raise FileNotFoundError(f"{filename} not found in any tar package")
+        tar_path, tar_info = tar_info_pair
+
+        # Open tar file and extract image data
+        try:
+            with tarfile.open(tar_path, "r") as tf:
+                file_obj = tf.extractfile(tar_info)
+                if file_obj is None:
+                    raise FileNotFoundError(f"Couldn't extract {filename} from {tar_path}")
+                img_data = file_obj.read()
+        except Exception as e:
+            raise RuntimeError(f"Error reading {filename} from {tar_path}: {e}")
+
+        # Process image using PIL
+        try:
+            _img = Image.open(io.BytesIO(img_data))
+            if _img.mode == "RGB":
+                img = np.array(_img)
+            elif _img.mode == "RGBA":
+                baimg = Image.new("RGB", _img.size, (255, 255, 255))
+                baimg.paste(_img, (0, 0), _img)
+                img = np.array(baimg)
+            else:
+                img = np.array(_img.convert("RGB"))
+        except Exception as e:
+            raise RuntimeError(f"Error processing image {filename}: {e}")
+
+        # Transform image to tensor
+        img_tensor = self.transforms(img)
+        h, w = img_tensor.shape[-2:]
+
+        # Get prompt and extras from metadata
+        prompt = metadata.get("tag_string_general", "")
+        extras = metadata.copy()
+
+        return False, img_tensor, prompt, (h, w), (0, 0), extras 
