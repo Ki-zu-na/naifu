@@ -425,7 +425,7 @@ class TarImageStore(StoreBase):
         The 'root_path' can be a dummy value.
         Required kwargs:
           - tar_dirs: a list (or single value) of directories containing tar files.
-          - metadata_json: path to the JSON file containing image metadata.
+          - metadata_json: path to the JSON file containing additional image metadata.
         """
         super().__init__(root_path, *args, **kwargs)
 
@@ -437,20 +437,22 @@ class TarImageStore(StoreBase):
         if self.metadata_json is None:
             raise ValueError("metadata_json parameter must be provided for TarImageStore.")
 
-        self.tar_index = {}  # mapping: filename -> (tar_path, TarInfo)
+        # Global metadata (e.g. tag/caption等信息)
         self.json_data = {}
-        self.filename_to_path = {}
-        # Load JSON metadata
         try:
             with open(self.metadata_json, "r") as f:
                 self.json_data = json.load(f)
         except Exception as e:
             raise ValueError(f"Failed to load metadata JSON: {e}")
 
-        # Build tar index from tar_dirs
+        # 初始化集合
+        self.tar_index = {}       # mapping: member.name -> (tar_path, TarInfo, file_info)
+        self.filename_to_path = {}
+
+        # Build tar index from tar_dirs, considering each tar file's associated JSON metadata.
         self._build_tar_index()
 
-        # Filter out valid entries based on keys in JSON and presence in tar index  
+        # 过滤掉不在全局 metadata_json 中的条目
         self.paths = [Path(name) for name in self.json_data.keys() if name in self.tar_index]
         self.length = len(self.paths)
         logger.debug(f"Filtered to {self.length} valid entries in TarImageStore.")
@@ -459,36 +461,56 @@ class TarImageStore(StoreBase):
         self.transforms = IMAGE_TRANSFORMS
 
     def _build_tar_index(self):
+        # 如果 tar_dirs 是一个字符串或 Path 对象，则转换为列表
         if isinstance(self.tar_dirs, (str, Path)):
             self.tar_dirs = [self.tar_dirs]
 
+        # 用于存储每个 tar 文件对应的 JSON 元信息
+        self.tar_json_data = {}
         for tar_dir in self.tar_dirs:
             tar_dir = Path(tar_dir)
             for tar_path in tar_dir.glob("**/*.tar"):
                 print(f"Processing tar file: {tar_path}")
+                # 查找同目录下与 tar 文件同名的 JSON 文件
+                json_file = tar_path.with_suffix(".json")
+                tar_file_metadata = {}
+                if json_file.exists():
+                    try:
+                        with open(json_file, "r") as jf:
+                            tar_file_metadata = json.load(jf)
+                            self.tar_json_data[tar_path] = tar_file_metadata
+                    except Exception as e:
+                        logger.warning(f"Failed to load JSON for {tar_path}: {e}")
+                else:
+                    logger.warning(f"No JSON metadata found for {tar_path}")
+
                 try:
                     with tarfile.open(tar_path, "r") as tf:
                         for member in tf.getmembers():
                             if member.isfile():
-                                print(f"  Checking member: {member.name}")
-                                if member.name not in self.tar_index:
-                                     #注意，此处需要检查的是member.name 而不是 os.path.basename(member.name)
-                                    self.tar_index[member.name] = (tar_path, member)
-                                    print(f"    Added to index: {member.name}")
+                                member_name = member.name
+                                # 如果当前 tar 文件加载了元数据，并且包含 "files" 字段，则检查当前 member 是否在其中
+                                if tar_file_metadata and "files" in tar_file_metadata:
+                                    if member_name not in tar_file_metadata["files"]:
+                                        continue  # 如果不在 JSON 描述中，则略过此成员
+                                    file_info = tar_file_metadata["files"].get(member_name, {})
                                 else:
-                                    logger.warning(f"Duplicate entry for {member.name} found in {tar_path}, skipping.")
-                                
-                                # 构建文件名到完整路径的映射
-                                filename = os.path.basename(member.name)
-                                if filename in self.json_data:  # 只添加 json 中存在的
+                                    file_info = {}
+
+                                if member_name not in self.tar_index:
+                                    self.tar_index[member_name] = (tar_path, member, file_info)
+                                    print(f"    Added to index: {member_name}")
+                                else:
+                                    logger.warning(f"Duplicate entry for {member_name} found in {tar_path}, skipping.")
+
+                                # 构建从文件名到成员完整路径的映射（仅当全局 metadata_json 中存在该文件时才添加）
+                                filename = os.path.basename(member_name)
+                                if filename in self.json_data:
                                     if filename not in self.filename_to_path:
-                                        self.filename_to_path[filename] = member.name
-                                        print(f"filename_to_path added {filename} to {member.name}")
+                                        self.filename_to_path[filename] = member_name
+                                        print(f"filename_to_path added {filename} to {member_name}")
                                     else:
-                                      # 如果文件名重复，记录警告
-                                      logger.warning(f"Duplicate filename {filename} found. Keeping the first entry.")
-
-
+                                        logger.warning(f"Duplicate filename {filename} found. Keeping the first entry.")
                 except Exception as e:
                     logger.error(f"Error processing tar file {tar_path}: {e}")
         print(f"Tar index built. Entries: {len(self.tar_index)}")
@@ -538,6 +560,7 @@ class TarImageStore(StoreBase):
         extras = metadata.copy()
 
         return False, img_tensor, prompt, (h, w), (0, 0), extras
+
 class CombinedStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
         super().__init__(root_path, *args, **kwargs)
