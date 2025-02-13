@@ -240,6 +240,8 @@ class AdaptiveSizeDataset(RatioDataset):
         seed: int = 42,
         **kwargs
     ):
+        # 调用父类的构造函数，保留 kwargs 中的 metadata_json 参数给 TarImageStore 使用
+        super().__init__(batch_size, img_path, ucg, rank, dtype, seed, **kwargs)
         # 如果配置中传入了 metadata_json 参数，则加载 json 数据（但不弹出，保证 TarImageStore 可以使用）
         self.metadata = None
         if "metadata_json" in kwargs:
@@ -254,8 +256,7 @@ class AdaptiveSizeDataset(RatioDataset):
             print(f"[AdaptiveSizeDataset] First 10 filtered paths: {self.store.paths[:10]}") # 添加打印前 10 个路径
             if not self.store.paths:
                 print("[AdaptiveSizeDataset] WARNING: Filtered dataset paths is EMPTY!") # 添加警告信息
-        # 调用父类的构造函数，保留 kwargs 中的 metadata_json 参数给 TarImageStore 使用
-        super().__init__(batch_size, img_path, ucg, rank, dtype, seed, **kwargs)
+
         
         # 如果 metadata 有效，则根据 json 中的标识过滤 self.store.paths
         if self.metadata is not None:
