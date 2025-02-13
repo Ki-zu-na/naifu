@@ -433,17 +433,18 @@ class TarImageStore(StoreBase):
         self.tar_dirs = self.kwargs.get("tar_dirs", [])
         if not self.tar_dirs:
             raise ValueError("tar_dirs parameter must be provided for TarImageStore.")
-        self.metadata_json = self.kwargs.get("metadata_json", None)
-        if self.metadata_json is None:
-            raise ValueError("metadata_json parameter must be provided for TarImageStore.")
+        self.metadata_json_path = self.kwargs.get("metadata_json", None) # 从 kwargs 中获取 metadata_json_path
+        # if self.metadata_json is None: # TarImageStore 自己判断 metadata_json_path 是否为空
+        #     raise ValueError("metadata_json parameter must be provided for TarImageStore.") # 如果 metadata_json_path 为空也不强制报错，允许不使用 metadata
 
         # Global metadata (e.g. tag/caption等信息)
         self.json_data = {}
-        try:
-            with open(self.metadata_json, "r") as f:
-                self.json_data = json.load(f)
-        except Exception as e:
-            raise ValueError(f"Failed to load metadata JSON: {e}")
+        if self.metadata_json_path: # 只有当 metadata_json_path 存在时才加载和过滤
+            try:
+                with open(self.metadata_json_path, "r") as f:
+                    self.json_data = json.load(f)
+            except Exception as e:
+                raise ValueError(f"Failed to load metadata JSON: {e}")
 
         # 初始化集合
         self.tar_index = {}       # mapping: member.name -> (tar_path, TarInfo, file_info)
@@ -452,8 +453,14 @@ class TarImageStore(StoreBase):
         # Build tar index from tar_dirs, considering each tar file's associated JSON metadata.
         self._build_tar_index()
 
-        # 过滤掉不在全局 metadata_json 中的条目
-        self.paths = [Path(name) for name in self.json_data.keys() if name in self.tar_index]
+        # 过滤掉不在全局 metadata_json 中的条目 (只有当 metadata_json_path 存在时才进行过滤)
+        if self.metadata_json_path and self.json_data:
+            self.paths = [Path(name) for name in self.json_data.keys() if name in self.tar_index]
+            print(f"TarImageStore filtered dataset to {len(self.paths)} entries based on metadata.")
+        else: # 如果没有 metadata_json_path 或者 json_data 为空，则不过滤，使用所有 tar 文件中的条目
+            self.paths = [Path(name) for name in self.tar_index if Path(name).is_file()] # 确保只包含文件路径
+            print(f"TarImageStore loaded all {len(self.paths)} entries from tar files without metadata filtering.")
+
         self.length = len(self.paths)
         logger.debug(f"Filtered to {self.length} valid entries in TarImageStore.")
 
@@ -566,15 +573,15 @@ class CombinedStore(StoreBase):
         super().__init__(root_path, *args, **kwargs)
         self._combined_paths = None  # 用于存储手动设置的 paths
 
-        self.metadata_json_path = self.kwargs.get("metadata_json")
+        self.metadata_json_path = self.kwargs.get("metadata_json") # 保留 metadata_json_path
         self.tar_dirs = self.kwargs.get("tar_dirs", [])
         self.load_latent = self.kwargs.get("load_latent", False)  # 显式指定是否加载 latent
         self.load_tar = self.kwargs.get("load_tar", False)
         self.load_directory = self.kwargs.get("load_directory", False)
-        self.metadata_json = {}
-        if self.metadata_json_path:
-            with open(self.metadata_json_path, "r", encoding="utf-8") as f:
-                self.metadata_json = json_lib.load(f)
+        self.metadata_json = {} # CombinedStore 本身不再加载 metadata_json，交给 TarImageStore 处理
+        # if self.metadata_json_path: # 移除 CombinedStore 加载 metadata_json 的代码
+        #     with open(self.metadata_json_path, "r", encoding="utf-8") as f: # 移除 CombinedStore 加载 metadata_json 的代码
+        #         self.metadata_json = json_lib.load(f) # 移除 CombinedStore 加载 metadata_json 的代码
 
         self.latent_store = None
         self.tar_store = None
@@ -590,11 +597,12 @@ class CombinedStore(StoreBase):
                 i: (current_index + i, "latent") for i in range(self.latent_length)
             }
             current_index += self.latent_length
-            
+
             self.latent_store.setup_filehandles() # 确保文件句柄被初始化
 
         if self.load_tar:
-            self.tar_store = TarImageStore(root_path, *args, **kwargs)
+            # 将 metadata_json_path 传递给 TarImageStore，让它自己处理过滤
+            self.tar_store = TarImageStore(root_path, *args, metadata_json=self.metadata_json_path, **kwargs)
             self.tar_length = len(self.tar_store)
             self.tar_index_map = {
                 i: (current_index + i, "tar") for i in range(self.tar_length)
@@ -614,7 +622,7 @@ class CombinedStore(StoreBase):
 
         # 设置 dan_probability，可以从 kwargs 中获取或使用默认值 (为 process_batch_fn 做准备)
         dan_probability = kwargs.get('dan_probability', 0.7)
-        
+
         # 创建一个偏函数，固定 dan_probability 参数
         self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
 
