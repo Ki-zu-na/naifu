@@ -573,15 +573,12 @@ class CombinedStore(StoreBase):
         super().__init__(root_path, *args, **kwargs)
         self._combined_paths = None  # 用于存储手动设置的 paths
 
-        self.metadata_json_path = self.kwargs.get("metadata_json") # 保留 metadata_json_path
+        self.metadata_json_path = self.kwargs.get("metadata_json")
         self.tar_dirs = self.kwargs.get("tar_dirs", [])
         self.load_latent = self.kwargs.get("load_latent", False)  # 显式指定是否加载 latent
         self.load_tar = self.kwargs.get("load_tar", False)
         self.load_directory = self.kwargs.get("load_directory", False)
-        self.metadata_json = {} # CombinedStore 本身不再加载 metadata_json，交给 TarImageStore 处理
-        # if self.metadata_json_path: # 移除 CombinedStore 加载 metadata_json 的代码
-        #     with open(self.metadata_json_path, "r", encoding="utf-8") as f: # 移除 CombinedStore 加载 metadata_json 的代码
-        #         self.metadata_json = json_lib.load(f) # 移除 CombinedStore 加载 metadata_json 的代码
+        self.metadata_json = {}
 
         self.latent_store = None
         self.tar_store = None
@@ -601,8 +598,11 @@ class CombinedStore(StoreBase):
             self.latent_store.setup_filehandles() # 确保文件句柄被初始化
 
         if self.load_tar:
+            # Pop metadata_json from kwargs to avoid passing it twice
+            tar_kwargs = kwargs.copy()
+            tar_kwargs.pop("metadata_json", None)
             # 将 metadata_json_path 传递给 TarImageStore，让它自己处理过滤
-            self.tar_store = TarImageStore(root_path, *args, metadata_json=self.metadata_json_path, **kwargs)
+            self.tar_store = TarImageStore(root_path, *args, metadata_json=self.metadata_json_path, **tar_kwargs)
             self.tar_length = len(self.tar_store)
             self.tar_index_map = {
                 i: (current_index + i, "tar") for i in range(self.tar_length)
@@ -625,7 +625,6 @@ class CombinedStore(StoreBase):
 
         # 创建一个偏函数，固定 dan_probability 参数
         self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
-
 
     @property
     def paths(self):
