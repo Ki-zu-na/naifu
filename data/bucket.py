@@ -1,5 +1,6 @@
 import functools
 import math
+import os
 import numpy as np
 import random
 import torch
@@ -255,10 +256,15 @@ class AdaptiveSizeDataset(RatioDataset):
         if self.metadata is not None:
             valid_ids = set(self.metadata.keys())
             from pathlib import Path
-            filtered_paths = [p for p in self.store.paths if Path(p).stem in valid_ids]
+
+            # 提取文件名和扩展名进行比较
+            filtered_paths = [
+                p for p in self.store.paths if os.path.basename(str(p)) in valid_ids
+            ]
             self.store.paths = filtered_paths
-            print(f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata.")
-        
+            print(
+                f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata."
+            )
         self.store.crop = self.crop
         self.target_area = target_area
         self.divisible = divisible
