@@ -439,7 +439,7 @@ class TarImageStore(StoreBase):
 
         self.tar_index = {}  # mapping: filename -> (tar_path, TarInfo)
         self.json_data = {}
-
+        self.filename_to_path = {}
         # Load JSON metadata
         try:
             with open(self.metadata_json, "r") as f:
@@ -459,24 +459,40 @@ class TarImageStore(StoreBase):
         self.transforms = IMAGE_TRANSFORMS
 
     def _build_tar_index(self):
-        """Traverse tar directories and build index mapping file name to (tar_path, TarInfo).  
-        In case of duplicates, the first encountered entry is kept."""
         if isinstance(self.tar_dirs, (str, Path)):
             self.tar_dirs = [self.tar_dirs]
 
         for tar_dir in self.tar_dirs:
             tar_dir = Path(tar_dir)
             for tar_path in tar_dir.glob("**/*.tar"):
+                print(f"Processing tar file: {tar_path}")
                 try:
                     with tarfile.open(tar_path, "r") as tf:
                         for member in tf.getmembers():
-                            if member.isfile() and member.name in self.json_data:
+                            if member.isfile():
+                                print(f"  Checking member: {member.name}")
                                 if member.name not in self.tar_index:
+                                     #注意，此处需要检查的是member.name 而不是 os.path.basename(member.name)
                                     self.tar_index[member.name] = (tar_path, member)
+                                    print(f"    Added to index: {member.name}")
                                 else:
                                     logger.warning(f"Duplicate entry for {member.name} found in {tar_path}, skipping.")
+                                
+                                # 构建文件名到完整路径的映射
+                                filename = os.path.basename(member.name)
+                                if filename in self.json_data:  # 只添加 json 中存在的
+                                    if filename not in self.filename_to_path:
+                                        self.filename_to_path[filename] = member.name
+                                        print(f"filename_to_path added {filename} to {member.name}")
+                                    else:
+                                      # 如果文件名重复，记录警告
+                                      logger.warning(f"Duplicate filename {filename} found. Keeping the first entry.")
+
+
                 except Exception as e:
                     logger.error(f"Error processing tar file {tar_path}: {e}")
+        print(f"Tar index built. Entries: {len(self.tar_index)}")
+        print(f"filename_to_path built, Entries: {len(self.filename_to_path)}")
 
     def get_raw_entry(self, index) -> tuple[bool, torch.Tensor, str, tuple[int, int], tuple[int, int], dict]:
         # Get filename and metadata
@@ -521,4 +537,108 @@ class TarImageStore(StoreBase):
         prompt = metadata.get("tag_string_general", "")
         extras = metadata.copy()
 
-        return False, img_tensor, prompt, (h, w), (0, 0), extras 
+        return False, img_tensor, prompt, (h, w), (0, 0), extras
+class CombinedStore(StoreBase):
+    def __init__(self, root_path, *args, **kwargs):
+        super().__init__(root_path, *args, **kwargs)
+
+        self.metadata_json_path = self.kwargs.get("metadata_json")
+        self.tar_dirs = self.kwargs.get("tar_dirs", [])
+        self.load_latent = self.kwargs.get("load_latent", False)  # 显式指定是否加载 latent
+        self.load_tar = self.kwargs.get("load_tar", False)
+        self.load_directory = self.kwargs.get("load_directory", False)
+        self.metadata_json = {}
+        if self.metadata_json_path:
+            with open(self.metadata_json_path, "r", encoding="utf-8") as f:
+                self.metadata_json = json_lib.load(f)
+
+        self.latent_store = None
+        self.tar_store = None
+        self.directory_store = None
+
+        current_index = 0
+
+        # Initialize and load data for each store type
+        if self.load_latent:
+            self.latent_store = LatentStore(root_path, *args, **kwargs)
+            self.latent_length = len(self.latent_store)
+            self.latent_index_map = {
+                i: (current_index + i, "latent") for i in range(self.latent_length)
+            }
+            current_index += self.latent_length
+            
+            self.latent_store.setup_filehandles() # 确保文件句柄被初始化
+
+        if self.load_tar:
+            self.tar_store = TarImageStore(root_path, *args, **kwargs)
+            self.tar_length = len(self.tar_store)
+            self.tar_index_map = {
+                i: (current_index + i, "tar") for i in range(self.tar_length)
+            }
+            current_index += self.tar_length
+
+        if self.load_directory:
+            self.directory_store = DirectoryImageStore(root_path, *args, **kwargs)
+            self.directory_length = len(self.directory_store)
+            self.directory_index_map = {
+                i: (current_index + i, "directory")
+                for i in range(self.directory_length)
+            }
+            current_index += self.directory_length
+
+        self.length = current_index  # Total length of the combined dataset
+
+        # 设置 dan_probability，可以从 kwargs 中获取或使用默认值 (为 process_batch_fn 做准备)
+        dan_probability = kwargs.get('dan_probability', 0.7)
+        
+        # 创建一个偏函数，固定 dan_probability 参数
+        self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
+
+
+    def get_raw_entry(self, index):
+        # Determine which store to use based on the index
+        if self.load_latent and index in self.latent_index_map:
+            mapped_index, store_type = self.latent_index_map[index]
+            is_latent, pixel, prompt, original_size, dhdw, extras = self.latent_store.get_raw_entry(
+                mapped_index - (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length+self.tar_length))
+            )
+        elif self.load_tar and index in self.tar_index_map:
+            mapped_index, store_type = self.tar_index_map[index]
+            is_latent, pixel, prompt, original_size, dhdw, extras = self.tar_store.get_raw_entry(
+                mapped_index - (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length+self.directory_length))
+            )
+        elif self.load_directory and index in self.directory_index_map:
+            mapped_index, store_type = self.directory_index_map[index]
+            is_latent, pixel, prompt, original_size, dhdw, extras = self.directory_store.get_raw_entry(
+                 mapped_index- (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))
+            )       
+        else:
+            raise IndexError(f"Index {index} out of range for CombinedStore")
+
+        # Merge extras with metadata from metadata_json, if available
+        if self.metadata_json:
+            # Determine the key for metadata_json (filename for tar/directory, hash for latent)
+            if store_type == "latent":
+                filename = self.latent_store.paths[mapped_index- (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length+self.tar_length))]  # Use latent store's path
+                metadata_key = filename
+            elif store_type == "tar":
+                filename = os.path.basename(str(self.tar_store.paths[mapped_index- (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length+self.directory_length))])) # Get filename from tar
+                metadata_key = filename
+            else:  # directory
+                filename = os.path.basename(str(self.directory_store.paths[mapped_index- (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))]))  # Get filename from path
+                metadata_key = filename
+
+            if metadata_key in self.metadata_json:
+                extras.update(self.metadata_json[metadata_key])
+
+        return is_latent, pixel, prompt, original_size, dhdw, extras
+
+    def __len__(self):
+        return self.length
+    
+    def setup_filehandles(self):  # 新增方法
+        if self.latent_store:
+            self.latent_store.setup_filehandles()
+
+    def get_batch_extras(self, path): # 这个函数现在可能用处不大，但为了兼容性，可以保留一个空的实现
+        return {}
