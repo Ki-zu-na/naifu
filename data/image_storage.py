@@ -430,10 +430,10 @@ class TarImageStore(StoreBase):
         super().__init__(root_path, *args, **kwargs)
 
         # Retrieve tar_dirs and metadata_json from kwargs
-        self.tar_dirs = kwargs.pop("tar_dirs", [])
+        self.tar_dirs = self.kwargs.pop("tar_dirs", [])
         if not self.tar_dirs:
             raise ValueError("tar_dirs parameter must be provided for TarImageStore.")
-        self.metadata_json = kwargs.pop("metadata_json", None)
+        self.metadata_json = self.kwargs.pop("metadata_json", None)
         if self.metadata_json is None:
             raise ValueError("metadata_json parameter must be provided for TarImageStore.")
 

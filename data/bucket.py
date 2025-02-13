@@ -228,17 +228,37 @@ class AspectRatioDataset(RatioDataset):
 class AdaptiveSizeDataset(RatioDataset):
     """AdaptiveRatioDataset, a modified version of AspectRatioDataset which avoid resize from smaller images"""
     def __init__(
-        self, 
-        batch_size: int, 
-        img_path: Path | str | list, 
-        ucg: int = 0, rank: int = 0, 
-        dtype=torch.float16, 
-        target_area: int = 1024 * 1024, 
-        divisible: int = 64, 
-        seed: int = 42, 
+        self,
+        batch_size: int,
+        img_path: Path | str | list,
+        ucg: int = 0,
+        rank: int = 0,
+        dtype=torch.float16,
+        target_area: int = 1024 * 1024,
+        divisible: int = 64,
+        seed: int = 42,
         **kwargs
     ):
+        # 如果配置中传入了 metadata_json 参数，则加载 json 数据
+        self.metadata = None
+        if "metadata_json" in kwargs:
+            metadata_path = kwargs.pop("metadata_json")
+            import json
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                self.metadata = json.load(f)
+            # 此处假设 json keys 为图像的唯一标识（即文件名，不含扩展名）
+        
+        # 调用父类的构造函数
         super().__init__(batch_size, img_path, ucg, rank, dtype, seed, **kwargs)
+        
+        # 如果 metadata 有效，则根据 json 中的标识过滤 self.store.paths
+        if self.metadata is not None:
+            valid_ids = set(self.metadata.keys())
+            from pathlib import Path
+            filtered_paths = [p for p in self.store.paths if Path(p).stem in valid_ids]
+            self.store.paths = filtered_paths
+            print(f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata.")
+        
         self.store.crop = self.crop
         self.target_area = target_area
         self.divisible = divisible
