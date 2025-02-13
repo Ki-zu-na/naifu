@@ -248,7 +248,12 @@ class AdaptiveSizeDataset(RatioDataset):
             with open(metadata_path, 'r', encoding='utf-8') as f:
                 self.metadata = json.load(f)
             # 此处假设 json keys 为图像的唯一标识（例如文件名，不包含扩展名）
-        
+            print(
+                f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata."
+            )
+            print(f"[AdaptiveSizeDataset] First 10 filtered paths: {self.store.paths[:10]}") # 添加打印前 10 个路径
+            if not self.store.paths:
+                print("[AdaptiveSizeDataset] WARNING: Filtered dataset paths is EMPTY!") # 添加警告信息
         # 调用父类的构造函数，保留 kwargs 中的 metadata_json 参数给 TarImageStore 使用
         super().__init__(batch_size, img_path, ucg, rank, dtype, seed, **kwargs)
         
@@ -329,5 +334,6 @@ class AdaptiveSizeDataset(RatioDataset):
             reso = (bucket_width, bucket_height)
             self.bucket_content[reso].append(idx)
             self.to_size[idx] = (bucket_width, bucket_height)
-
+        print(f"[AdaptiveSizeDataset] Bucket Content: {self.bucket_content}") # 打印 bucket 内容
+        print(f"[AdaptiveSizeDataset] To Size Mapping (first 10): {dict(list(self.to_size.items())[:10])}") # 打印 to_size 映射
         self.bucket_content = [v for k, v in self.bucket_content.items()]
