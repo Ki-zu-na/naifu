@@ -665,3 +665,14 @@ class CombinedStore(StoreBase):
 
     def get_batch_extras(self, path): # 这个函数现在可能用处不大，但为了兼容性，可以保留一个空的实现
         return {}
+
+    @property
+    def paths(self):
+        all_paths = []
+        if self.latent_store is not None:
+            all_paths += self.latent_store.paths
+        if self.tar_store is not None:
+            all_paths += self.tar_store.paths
+        if self.directory_store is not None:
+            all_paths += self.directory_store.paths
+        return all_paths
