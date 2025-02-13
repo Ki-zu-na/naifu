@@ -499,7 +499,7 @@ class TarImageStore(StoreBase):
 
                                 if member_name not in self.tar_index:
                                     self.tar_index[member_name] = (tar_path, member, file_info)
-                                    print(f"    Added to index: {member_name}")
+                                    #print(f"    Added to index: {member_name}")
                                 else:
                                     logger.warning(f"Duplicate entry for {member_name} found in {tar_path}, skipping.")
 
@@ -508,7 +508,7 @@ class TarImageStore(StoreBase):
                                 if filename in self.json_data:
                                     if filename not in self.filename_to_path:
                                         self.filename_to_path[filename] = member_name
-                                        print(f"filename_to_path added {filename} to {member_name}")
+                                        #print(f"filename_to_path added {filename} to {member_name}")
                                     else:
                                         logger.warning(f"Duplicate filename {filename} found. Keeping the first entry.")
                 except Exception as e:
@@ -564,6 +564,7 @@ class TarImageStore(StoreBase):
 class CombinedStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
         super().__init__(root_path, *args, **kwargs)
+        self._combined_paths = None  # 用于存储手动设置的 paths
 
         self.metadata_json_path = self.kwargs.get("metadata_json")
         self.tar_dirs = self.kwargs.get("tar_dirs", [])
@@ -618,37 +619,61 @@ class CombinedStore(StoreBase):
         self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
 
 
+    @property
+    def paths(self):
+        # 如果已经手动设置过，则直接返回，否则聚合子 store 的 paths
+        if self._combined_paths is not None:
+            return self._combined_paths
+        all_paths = []
+        if self.latent_store is not None:
+            all_paths += self.latent_store.paths
+        if self.tar_store is not None:
+            all_paths += self.tar_store.paths
+        if self.directory_store is not None:
+            all_paths += self.directory_store.paths
+        return all_paths
+
+    @paths.setter
+    def paths(self, value):
+        # 将赋值操作存储到 _combined_paths 中
+        self._combined_paths = value
+
     def get_raw_entry(self, index):
         # Determine which store to use based on the index
         if self.load_latent and index in self.latent_index_map:
             mapped_index, store_type = self.latent_index_map[index]
             is_latent, pixel, prompt, original_size, dhdw, extras = self.latent_store.get_raw_entry(
-                mapped_index - (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length+self.tar_length))
+                mapped_index - (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length + self.tar_length))
             )
         elif self.load_tar and index in self.tar_index_map:
             mapped_index, store_type = self.tar_index_map[index]
             is_latent, pixel, prompt, original_size, dhdw, extras = self.tar_store.get_raw_entry(
-                mapped_index - (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length+self.directory_length))
+                mapped_index - (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length + self.directory_length))
             )
         elif self.load_directory and index in self.directory_index_map:
             mapped_index, store_type = self.directory_index_map[index]
             is_latent, pixel, prompt, original_size, dhdw, extras = self.directory_store.get_raw_entry(
-                 mapped_index- (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))
-            )       
+                mapped_index - (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))
+            )
         else:
             raise IndexError(f"Index {index} out of range for CombinedStore")
 
         # Merge extras with metadata from metadata_json, if available
         if self.metadata_json:
-            # Determine the key for metadata_json (filename for tar/directory, hash for latent)
             if store_type == "latent":
-                filename = self.latent_store.paths[mapped_index- (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length+self.tar_length))]  # Use latent store's path
+                filename = self.latent_store.paths[
+                    mapped_index - (0 if store_type == "latent" else (self.latent_length if store_type == "tar" else self.latent_length + self.tar_length))
+                ]
                 metadata_key = filename
             elif store_type == "tar":
-                filename = os.path.basename(str(self.tar_store.paths[mapped_index- (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length+self.directory_length))])) # Get filename from tar
+                filename = os.path.basename(str(self.tar_store.paths[
+                    mapped_index - (0 if store_type == "tar" else (self.latent_length if store_type == "latent" else self.tar_length + self.directory_length))
+                ]))
                 metadata_key = filename
-            else:  # directory
-                filename = os.path.basename(str(self.directory_store.paths[mapped_index- (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))]))  # Get filename from path
+            else:
+                filename = os.path.basename(str(self.directory_store.paths[
+                    mapped_index - (0 if store_type == "directory" else (self.tar_length if store_type == "tar" else self.directory_length))
+                ]))
                 metadata_key = filename
 
             if metadata_key in self.metadata_json:
@@ -665,14 +690,3 @@ class CombinedStore(StoreBase):
 
     def get_batch_extras(self, path): # 这个函数现在可能用处不大，但为了兼容性，可以保留一个空的实现
         return {}
-
-    @property
-    def paths(self):
-        all_paths = []
-        if self.latent_store is not None:
-            all_paths += self.latent_store.paths
-        if self.tar_store is not None:
-            all_paths += self.tar_store.paths
-        if self.directory_store is not None:
-            all_paths += self.directory_store.paths
-        return all_paths
