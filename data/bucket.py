@@ -71,7 +71,33 @@ class RatioDataset(Dataset):
         raise NotImplementedError
 
     def assign_buckets(self):
-        raise NotImplementedError
+        img_res = np.array(self.store.raw_res)
+        self.to_size = {}
+        self.bucket_content = defaultdict(list)
+
+        # 为每个图像分配桶
+        for idx, (img_width, img_height) in enumerate(img_res):
+            img_area = img_width * img_height
+
+            # 检查图像是否需要调整大小（仅允许缩小）
+            if img_area > self.target_area:
+                scale_factor = math.sqrt(self.target_area / img_area)
+                img_width = math.floor(img_width * scale_factor)
+                img_height = math.floor(img_height * scale_factor)
+
+            # 确保尺寸是 divisible 的倍数
+            bucket_width = math.floor(img_width / self.divisible) * self.divisible
+            bucket_height = math.floor(img_height / self.divisible) * self.divisible
+            
+            # 确保最小尺寸
+            bucket_width = max(self.divisible, bucket_width)
+            bucket_height = max(self.divisible, bucket_height)
+            
+            reso = (bucket_width, bucket_height)
+            self.bucket_content[reso].append(idx)
+            self.to_size[idx] = (bucket_height, bucket_width)  # 注意这里是 (height, width)
+
+        self.bucket_content = [v for k, v in self.bucket_content.items()]
 
     def init_batches(self):
         self.assign_buckets()
@@ -257,16 +283,13 @@ class AdaptiveSizeDataset(RatioDataset):
         assert self.to_size is not None, "to_ratio is not initialized"
         H, W = entry.pixel.shape[-2:]
         h, w = self.to_size[i]
-        bucket_width = w - w % self.divisible
-        bucket_height = h - h % self.divisible
+        
+        # 确保目标尺寸是 divisible 的倍数
+        bucket_width = math.floor(w / self.divisible) * self.divisible
+        bucket_height = math.floor(h / self.divisible) * self.divisible
         
         if not entry.is_latent:
-            resize_h, resize_w = h, w
-            # entry.pixel = Resize(
-            #     size=(resize_h, resize_w), 
-            #     interpolation=InterpolationMode.BILINEAR, 
-            #     antialias=None
-            # )(entry.pixel)
+            resize_h, resize_w = bucket_height, bucket_width
             pixel = entry.pixel
             if isinstance(pixel, torch.Tensor):
                 pixel = pixel.permute(1, 2, 0).cpu().numpy()
@@ -275,17 +298,18 @@ class AdaptiveSizeDataset(RatioDataset):
             pixel = cv2.resize(pixel.astype(float), (resize_w, resize_h), interpolation=interp)
             entry.pixel = torch.from_numpy(pixel).permute(2, 0, 1)
         else:
-            h, w = bucket_height // 8, bucket_width // 8
+            bucket_height = bucket_height // 8
+            bucket_width = bucket_width // 8
 
         H, W = entry.pixel.shape[-2:]
         if self.use_central_crop:
-            dh, dw = (H - h) // 2, (W - w) // 2
+            dh, dw = (H - bucket_height) // 2, (W - bucket_width) // 2
         else:
-            assert H >= h and W >= w, f"{H}<{h} or {W}<{w}"
-            dh, dw = random.randint(0, H - h), random.randint(0, W - w)
+            assert H >= bucket_height and W >= bucket_width, f"{H}<{bucket_height} or {W}<{bucket_width}"
+            dh, dw = random.randint(0, H - bucket_height), random.randint(0, W - bucket_width)
 
-        entry.pixel = entry.pixel[:, dh : dh + h, dw : dw + w]
-        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(h, w)}")
+        entry.pixel = entry.pixel[:, dh : dh + bucket_height, dw : dw + bucket_width]
+        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(bucket_height, bucket_width)}")
         return entry, dh, dw
 
     def generate_buckets(self):
@@ -305,13 +329,6 @@ class AdaptiveSizeDataset(RatioDataset):
                 scale_factor = math.sqrt(self.target_area / img_area)
                 img_width = math.floor(img_width * scale_factor / self.divisible) * self.divisible
                 img_height = math.floor(img_height * scale_factor / self.divisible) * self.divisible
-
-                # 确保缩放后的面积不超过 target_area
-                current_area = img_width * img_height
-                if current_area > self.target_area: # 再次检查，如果面积还是超了，就进一步缩小尺寸
-                    scale_factor = math.sqrt(self.target_area / current_area)
-                    img_width = math.floor(img_width * scale_factor / self.divisible) * self.divisible
-                    img_height = math.floor(img_height * scale_factor / self.divisible) * self.divisible
 
 
             bucket_width = img_width - img_width % self.divisible
