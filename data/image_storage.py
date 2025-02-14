@@ -150,8 +150,10 @@ class StoreBase(Dataset):
 
         is_latent = entries[0].is_latent
         shape = entries[0].pixel.shape
+        logger.debug(f"Batch first image shape: {shape}")
 
         for e in entries[1:]:
+            logger.debug(f"Image shape in batch: {e.pixel.shape}")
             assert e.is_latent == is_latent
             assert (
                 e.pixel.shape == shape

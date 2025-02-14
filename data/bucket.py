@@ -192,6 +192,7 @@ class AspectRatioDataset(RatioDataset):
             dh, dw = random.randint(0, H - h), random.randint(0, W - w)
 
         entry.pixel = entry.pixel[:, dh : dh + h, dw : dw + w]
+        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(h, w)}")
         return entry, dh, dw
 
     def generate_buckets(self):
@@ -253,32 +254,28 @@ class AdaptiveSizeDataset(RatioDataset):
         self.init_batches()
     
     def crop(self, entry: Entry, i: int) -> Entry:
-        assert self.to_ratio is not None, "to_ratio is not initialized"
+        assert self.to_size is not None, "to_ratio is not initialized"
         H, W = entry.pixel.shape[-2:]
-        base_ratio = H / W
-        target_ratio = self.to_ratio[i]
-        h, w = self.ratio_to_bucket[target_ratio]
+        h, w = self.to_size[i]
+        bucket_width = w - w % self.divisible
+        bucket_height = h - h % self.divisible
+        
         if not entry.is_latent:
-            resize_h, resize_w = self.fit_dimensions(base_ratio, h, w)
-            # interp = InterpolationMode.BILINEAR if resize_h < H else InterpolationMode.BICUBIC
+            resize_h, resize_w = h, w
             # entry.pixel = Resize(
-            #     size=(resize_h, resize_w),
-            #     interpolation=interp,
+            #     size=(resize_h, resize_w), 
+            #     interpolation=InterpolationMode.BILINEAR, 
             #     antialias=None
             # )(entry.pixel)
-
             pixel = entry.pixel
             if isinstance(pixel, torch.Tensor):
                 pixel = pixel.permute(1, 2, 0).cpu().numpy()
-
+                
             interp = cv2.INTER_AREA if resize_h < H else cv2.INTER_LANCZOS4
             pixel = cv2.resize(pixel.astype(float), (resize_w, resize_h), interpolation=interp)
             entry.pixel = torch.from_numpy(pixel).permute(2, 0, 1)
         else:
-            h, w = h // 8, w // 8
-
-        H_cropped_before, W_cropped_before = entry.pixel.shape[-2:] # 调试信息：裁剪前的尺寸
-        print(f"原始尺寸: ({H}, {W}), 目标尺寸: ({h}, {w}), resize尺寸: ({resize_h}, {resize_w}), 裁剪前尺寸: ({H_cropped_before}, {W_cropped_before})") # 调试信息
+            h, w = bucket_height // 8, bucket_width // 8
 
         H, W = entry.pixel.shape[-2:]
         if self.use_central_crop:
@@ -288,8 +285,7 @@ class AdaptiveSizeDataset(RatioDataset):
             dh, dw = random.randint(0, H - h), random.randint(0, W - w)
 
         entry.pixel = entry.pixel[:, dh : dh + h, dw : dw + w]
-        H_cropped_after, W_cropped_after = entry.pixel.shape[-2:] # 调试信息：裁剪后的尺寸
-        print(f"裁剪后尺寸: ({H_cropped_after}, {W_cropped_after}), dhdw: ({dh}, {dw})") # 调试信息
+        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(h, w)}")
         return entry, dh, dw
 
     def generate_buckets(self):
