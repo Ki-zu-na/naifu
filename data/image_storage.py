@@ -470,11 +470,14 @@ class TarImageStore(StoreBase):
                     else:
                         #  如果 prompt_data 中没有分辨率信息，则尝试从图像文件中获取
                         try:
-                            with tarfile.open(tar_path, 'r') as tar_file_handle: # 在此处打开 tar 文件
-                                with tar_file_handle.extractfile(tarfile.TarInfo(filename_in_tar)) as fileobj: # 保持使用 TarInfo 对象
-                                    _img = Image.open(fileobj)
-                                    height, width = _img.size[1], _img.size[0] # PIL Image size 返回 (width, height)
-                                    self.raw_res.append((height, width))
+                            with tarfile.open(tar_path, 'r') as tar_file_handle:
+                                tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
+                                tar_file_obj.seek(file_info['offset'])  # 定位到偏移量
+                                image_data = tar_file_obj.read(file_info['size'])  # 读取指定大小的数据
+                                fileobj = io.BytesIO(image_data) # 使用 BytesIO 包装字节数据
+                                _img = Image.open(fileobj)
+                                height, width = _img.size[1], _img.size[0]
+                                self.raw_res.append((height, width))
                         except Exception as e:
                             logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (512, 512)")
                             self.raw_res.append((512, 512)) # 默认分辨率
@@ -528,7 +531,10 @@ class TarImageStore(StoreBase):
         size = file_meta['size']
 
         try:
-            with tar_file_handle.extractfile(tarfile.TarInfo(filename_in_tar)) as fileobj:
+            with tar_file_handle.fileobj as tar_file_obj: #  使用 tar_file_handle.fileobj
+                tar_file_obj.seek(offset)
+                image_data = tar_file_obj.read(size)
+                fileobj = io.BytesIO(image_data)
                 _img = Image.open(fileobj)
                 if _img.mode == "RGB":
                     img = np.array(_img)
