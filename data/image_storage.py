@@ -124,7 +124,7 @@ class StoreBase(Dataset):
 
         for e, i in zip(entries, indices):
             e = self.process_batch(e)
-            logger.debug(f"Prompt processed: {e.prompt}")
+            #logger.debug(f"Prompt processed: {e.prompt}")
             e, dh, dw = self.crop(e, i)
             pixels.append(e.pixel)
             original_size = torch.asarray(e.original_size)
@@ -280,11 +280,6 @@ class LatentStore(StoreBase):
             self.length = new_length
             logger.debug(f"Using {self.length} entries after applied repeat strategy")
 
-        # 设置 dan_probability，可以从 kwargs 中获取或使用默认值
-        dan_probability = kwargs.get('dan_probability', 0.7)
-        
-        # 创建一个偏函数，固定 dan_probability 参数
-        self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
 
 
     def setup_filehandles(self):
@@ -613,11 +608,6 @@ class CombinedStore(StoreBase):
         self.paths = self._combined_paths # 直接赋值，paths 不再是 property
         self.raw_res = self._combined_raw_res # 直接赋值，raw_res 也不再是 property
 
-        # 设置 dan_probability，可以从 kwargs 中获取或使用默认值 (为 process_batch_fn 做准备)
-        dan_probability = kwargs.get('dan_probability', 0.7)
-
-        # 创建一个偏函数，固定 dan_probability 参数
-        self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
 
     def get_raw_entry(self, index):
         # Determine which store to use based on the index

@@ -119,7 +119,7 @@ def shuffle_prompts_sdstyle(e: Entry):
 def dropout_tags(tokens, dropout_rate):
     return [token for token in tokens if random.random() > dropout_rate]
 
-def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float = 0.7):
+def shuffle_prompts_dan_native_style(data_entry: Entry):
     """
     Process an Entry object and return a new Entry object with either 'dan' or 'native' caption.
     If 'native' caption is empty, 'dan' caption is used regardless of probability.
@@ -131,6 +131,7 @@ def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float =
     Returns:
     Entry: Processed Entry object with updated prompt and extras.
     """
+    dan_probability: float = 0.7
     # Check if the data entry has the required fields in extras
     if not data_entry.extras or 'train_caption_dan' not in data_entry.extras or 'train_caption_native' not in data_entry.extras:
         raise ValueError("Missing 'train_caption_dan' or 'train_caption_native' in extras")

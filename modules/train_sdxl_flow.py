@@ -101,7 +101,7 @@ class SupervisedFineTune(StableDiffusionModel):
             from modules.losses.tag_loss import TagLossModule
             
             def is_special_tag(tag: str) -> bool:
-                return tag.startswith(("artist:", "character:", "rating:"))
+                return tag.startswith(("artist:", "character:", "rating:", "style:", "copyright:"))
             
             self.tag_loss_module = TagLossModule(
                 check_fn=is_special_tag,
@@ -112,7 +112,6 @@ class SupervisedFineTune(StableDiffusionModel):
             )
 
     def forward(self, batch):
-        advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
             self.first_stage_model.to(self.target_device)
             latents = self.encode_first_stage(batch["pixels"].to(self.first_stage_model.dtype))
@@ -130,58 +129,39 @@ class SupervisedFineTune(StableDiffusionModel):
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
         sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
-
         shift = 2.0
         sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
         timesteps = (sigmas * 1000.0)
         sigmas = sigmas.view(-1, 1, 1, 1)
         noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
-
         target = noise - latents
-
         base_loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1)
         
         # 应用tag loss
         if hasattr(self, "tag_loss_module"):
-            # 更新全局步数
             self.tag_loss_module.global_step = self.global_step
-            
-            # 计算权重并应用
             weights = self.tag_loss_module.calculate_loss_weights(
-                batch["prompts"],  # 假设prompt在batch中
+                batch["prompts"],
                 base_loss.detach()
             )
-            
-            # 增加更详细的日志记录
+
             if hasattr(self, "log_dict"):
-                self.log_dict({
+                log_dict = {
                     "train/tag_loss_weight": weights.mean().item(),
                     "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
-                    "train/min_weight": weights.min().item()
-                })
-                
-                # 记录特殊标签的数量
-                special_tags_count = sum(1 for prompt in batch["prompts"] 
-                                      for tag in prompt.split(",") 
-                                      if self.tag_loss_module.check_fn(tag.strip()))
-                self.log_dict({
-                    "train/special_tags_count": special_tags_count
-                })
-            
-            # 存储metrics供trainer使用
-            self.tag_loss_metrics = {
-                "train/tag_loss_weight": weights.mean().item(),
-                "train/weighted_loss": (base_loss * weights).mean().item(),
-                "train/max_weight": weights.max().item(),
-                "train/min_weight": weights.min().item(),
-                "train/special_tags_count": sum(1 for prompt in batch["prompts"] 
-                                              for tag in prompt.split(",") 
-                                              if self.tag_loss_module.check_fn(tag.strip()))
-            }
-            
-            return (base_loss * weights).mean()
-        
-        return base_loss.mean()
+                    "train/min_weight": weights.min().item(),
+                    "train/special_tags_count": sum(1 for prompt in batch["prompts"]
+                                                    for tag in prompt.split(",")
+                                                    if self.tag_loss_module.check_fn(tag.strip()))
+                }
+                self.log_dict(log_dict)
+                self.tag_loss_metrics = log_dict # 存储metrics供trainer使用
+
+            loss = (base_loss * weights).mean()
+        else:
+            loss = base_loss.mean()
+
+        return loss
 
