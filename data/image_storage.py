@@ -479,8 +479,8 @@ class TarImageStore(StoreBase):
                                 height, width = _img.size[1], _img.size[0]
                                 self.raw_res.append((height, width))
                         except Exception as e:
-                            logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (512, 512)")
-                            self.raw_res.append((512, 512)) # 默认分辨率
+                            logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (1024, 1024)")
+                            self.raw_res.append((1024, 1024)) # 默认分辨率
                     self.tar_index_map[index_counter] = (tar_path, filename_in_tar)
                     index_counter += 1
 
