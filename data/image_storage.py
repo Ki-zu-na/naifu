@@ -420,162 +420,158 @@ class DirectoryImageStore(StoreBase):
 
 class TarImageStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
-        """
-        For tar-based image storage, we do not need to scan a directory.
-        The 'root_path' can be a dummy value.
-        Required kwargs:
-          - tar_dirs: a list (or single value) of directories containing tar files.
-          - metadata_json: path to the JSON file containing additional image metadata.
-        """
         super().__init__(root_path, *args, **kwargs)
+        self.tar_dirs = kwargs.get("tar_dirs", [])
+        self.metadata_json_path = self.kwargs.get("metadata_json")
+        self.metadata_json = {}
+        self.paths = []
+        self.raw_res = []
+        self.filename_to_path = {} # filename -> tar path
+        self.tar_index = [] # 存储 tar 文件索引信息，每个元素是 (tar_path, index_in_tar)
+        self.length = 0
 
-        # Retrieve tar_dirs and metadata_json from kwargs
-        self.tar_dirs = self.kwargs.get("tar_dirs", [])
-        if not self.tar_dirs:
-            raise ValueError("tar_dirs parameter must be provided for TarImageStore.")
-        self.metadata_json_path = self.kwargs.get("metadata_json", None) # 从 kwargs 中获取 metadata_json_path
-        # if self.metadata_json is None: # TarImageStore 自己判断 metadata_json_path 是否为空
-        #     raise ValueError("metadata_json parameter must be provided for TarImageStore.") # 如果 metadata_json_path 为空也不强制报错，允许不使用 metadata
-
-        # Global metadata (e.g. tag/caption等信息)
-        self.json_data = {}
-        if self.metadata_json_path: # 只有当 metadata_json_path 存在时才加载和过滤
+        if self.metadata_json_path:
             try:
-                with open(self.metadata_json_path, "r") as f:
-                    self.json_data = json.load(f)
-            except Exception as e:
-                raise ValueError(f"Failed to load metadata JSON: {e}")
+                with open(self.metadata_json_path, 'r', encoding='utf-8') as f:
+                    self.metadata_json = json.load(f)
+                print(f"[TarImageStore] Metadata loaded from {self.metadata_json_path}")
+            except FileNotFoundError:
+                print(f"[TarImageStore] Metadata file not found at {self.metadata_json_path}, proceeding without metadata filtering.")
+            except json.JSONDecodeError as e:
+                print(f"[TarImageStore] Error decoding metadata JSON at {self.metadata_json_path}: {e}. Proceeding without metadata filtering.")
+                self.metadata_json = {} # 确保即使解析错误也初始化为空字典，避免后续代码出错
 
-        # 初始化集合
-        self.tar_index = {}       # mapping: member.name -> (tar_path, TarInfo, file_info)
-        self.filename_to_path = {}
+        if not self.tar_dirs:
+            self.tar_dirs = [self.root_path]
+
+        self._build_index_from_tar()
+        if self.metadata_json:
+            self._filter_by_metadata() # 添加根据 metadata 过滤的步骤
+        else:
+            print("[TarImageStore] No metadata JSON provided, skipping metadata filtering.")
+
+        print(f"[TarImageStore] Total entries after filtering: {len(self.paths)}")
+        if not self.paths:
+            print("[TarImageStore] WARNING: No valid image paths found after filtering!")
+        else:
+            print(f"[TarImageStore] First 10 image paths: {self.paths[:10]}")
 
 
-        # 过滤掉不在全局 metadata_json 中的条目 (只有当 metadata_json_path 存在时才进行过滤)
-        if self.metadata_json_path and self.json_data:
-            self.paths = [Path(name) for name in self.json_data.keys() if name in self.tar_index]
-            print(f"TarImageStore filtered dataset to {len(self.paths)} entries based on metadata.")
-        else: # 如果没有 metadata_json_path 或者 json_data 为空，则不过滤，使用所有 tar 文件中的条目
-            self.paths = [Path(name) for name in self.tar_index if Path(name).is_file()] # 确保只包含文件路径
-            print(f"TarImageStore loaded all {len(self.paths)} entries from tar files without metadata filtering.")
-        # Build tar index from tar_dirs, considering each tar file's associated JSON metadata.
-        self._build_tar_index()
-        self.length = len(self.paths)
-        logger.debug(f"Filtered to {self.length} valid entries in TarImageStore.")
-
-        # Set transform (reuse IMAGE_TRANSFORMS)
-        self.transforms = IMAGE_TRANSFORMS
-
-    def _build_tar_index(self):
-        # 如果 tar_dirs 是一个字符串或 Path 对象，则转换为列表
-        if isinstance(self.tar_dirs, (str, Path)):
-            self.tar_dirs = [self.tar_dirs]
-
-        # 用于存储每个 tar 文件对应的 JSON 元信息
-        self.tar_json_data = {}
+    def _build_index_from_tar(self):
+        all_entries = []
+        filename_to_path = {}
         for tar_dir in self.tar_dirs:
-            tar_dir = Path(tar_dir)
-            for tar_path in tar_dir.glob("**/*.tar"):
+            tar_dir_path = Path(tar_dir)
+            if not tar_dir_path.exists():
+                print(f"[TarImageStore] Warning: Tar directory '{tar_dir_path}' does not exist.")
+                continue # 如果目录不存在，跳过
+
+            for tar_path in tar_dir_path.glob("*.tar"):
                 print(f"Processing tar file: {tar_path}")
-                # 查找同目录下与 tar 文件同名的 JSON 文件
-                json_file = tar_path.with_suffix(".json")
-                tar_file_metadata = {}
-                if json_file.exists():
-                    try:
-                        with open(json_file, "r") as jf:
-                            tar_file_metadata = json.load(jf)
-                            self.tar_json_data[tar_path] = tar_file_metadata
-                    except Exception as e:
-                        logger.warning(f"Failed to load JSON for {tar_path}: {e}")
-                else:
-                    logger.warning(f"No JSON metadata found for {tar_path}")
-
-                try:
-                    with tarfile.open(tar_path, "r") as tf:
-                        for member in tf.getmembers():
-                            if member.isfile():
-                                member_name = member.name
-                                # 如果当前 tar 文件加载了元数据，并且包含 "files" 字段，则检查当前 member 是否在其中
-                                if tar_file_metadata and "files" in tar_file_metadata:
-                                    if member_name not in tar_file_metadata["files"]:
-                                        continue  # 如果不在 JSON 描述中，则略过此成员
-                                    file_info = tar_file_metadata["files"].get(member_name, {})
-                                else:
-                                    file_info = {}
-
-                                if member_name not in self.tar_index:
-                                    self.tar_index[member_name] = (tar_path, member, file_info)
-                                    #print(f"    Added to index: {member_name}")
-                                else:
-                                    logger.warning(f"Duplicate entry for {member_name} found in {tar_path}, skipping.")
-
-                                # 构建从文件名到成员完整路径的映射（仅当全局 metadata_json 中存在该文件时才添加）
-                                filename = os.path.basename(member_name)
-                                if filename in self.json_data:
-                                    if filename not in self.filename_to_path:
-                                        self.filename_to_path[filename] = member_name
-                                        #print(f"filename_to_path added {filename} to {member_name}")
-                                    else:
-                                        logger.warning(f"Duplicate filename {filename} found. Keeping the first entry.")
-                except Exception as e:
-                    logger.error(f"Error processing tar file {tar_path}: {e}")
+                with tarfile.open(tar_path, 'r') as tar:
+                    members = tar.getmembers()
+                    for i, member in enumerate(members):
+                        if member.isfile() and Path(member.name).suffix.lower() in image_suffix:
+                            filename = Path(member.name).name
+                            all_entries.append((str(tar_path), i, filename)) # 存储 tar 文件路径, 索引和文件名
+                            filename_to_path[filename] = str(tar_path) # 构建 filename 到 tar 路径的映射
+        self.tar_index = all_entries
+        self.filename_to_path = filename_to_path
         print(f"Tar index built. Entries: {len(self.tar_index)}")
         print(f"filename_to_path built, Entries: {len(self.filename_to_path)}")
 
-        # 在构建完索引后，填充 raw_res
-        self.raw_res = []
-        for path in self.paths:
-            tar_path, member, _ = self.tar_index[str(path)]
-            with tarfile.open(tar_path, "r") as tf:
-                img_data = tf.extractfile(member).read()
-                img = Image.open(io.BytesIO(img_data))
-                w, h = img.size
-                self.raw_res.append((h, w))
 
-    def get_raw_entry(self, index) -> tuple[bool, torch.Tensor, str, tuple[int, int], tuple[int, int], dict]:
-        # Get filename and metadata
-        filename = str(self.paths[index])
-        metadata = self.json_data.get(filename, {})
+    def _filter_by_metadata(self):
+        valid_entries = []
+        valid_paths = []
+        valid_raw_res = []
+        filtered_count = 0
 
-        # Retrieve tar info from index
-        tar_info_pair = self.tar_index.get(filename, None)
-        if tar_info_pair is None:
-            raise FileNotFoundError(f"{filename} not found in any tar package")
-        tar_path, tar_info = tar_info_pair
+        if not self.metadata_json:
+            print("[TarImageStore] No metadata to filter with, skipping filtering.")
+            return # 如果 metadata_json 为空，直接返回
 
-        # Open tar file and extract image data
-        try:
-            with tarfile.open(tar_path, "r") as tf:
-                file_obj = tf.extractfile(tar_info)
-                if file_obj is None:
-                    raise FileNotFoundError(f"Couldn't extract {filename} from {tar_path}")
-                img_data = file_obj.read()
-        except Exception as e:
-            raise RuntimeError(f"Error reading {filename} from {tar_path}: {e}")
+        valid_ids_from_metadata = set(self.metadata_json.keys())
+        print(f"[TarImageStore] Number of valid IDs from metadata: {len(valid_ids_from_metadata)}")
 
-        # Process image using PIL
-        try:
-            _img = Image.open(io.BytesIO(img_data))
-            if _img.mode == "RGB":
-                img = np.array(_img)
-            elif _img.mode == "RGBA":
-                baimg = Image.new("RGB", _img.size, (255, 255, 255))
-                baimg.paste(_img, (0, 0), _img)
-                img = np.array(baimg)
+        for tar_path, index_in_tar, filename in self.tar_index:
+            filename_without_ext = Path(filename).stem # 获取不带扩展名的文件名
+            if filename_without_ext in valid_ids_from_metadata:
+                valid_entries.append((tar_path, index_in_tar))
+                valid_paths.append(filename) # 这里使用文件名，而不是完整路径，因为 paths 属性通常用于文件名
+                # 需要从 tar 文件中读取图像以获取 raw_res，这里先放一个占位符，稍后实现
+                try:
+                    is_latent, pixel, prompt, original_size, dhdw, extras = self.get_raw_entry_from_tar_entry((tar_path, index_in_tar))
+                    valid_raw_res.append(original_size)
+                except Exception as e:
+                    print(f"[TarImageStore] Error getting raw entry for {filename} in {tar_path}: {e}. Skipping resolution retrieval.")
+                    valid_raw_res.append((512, 512)) # 默认分辨率，防止后续代码出错
             else:
-                img = np.array(_img.convert("RGB"))
-        except Exception as e:
-            raise RuntimeError(f"Error processing image {filename}: {e}")
+                filtered_count += 1
+                # print(f"[TarImageStore] Filtered out {filename} because it's not in metadata.") # 太多过滤信息，默认不打印
 
-        # Transform image to tensor
-        img_tensor = self.transforms(img)
-        h, w = img_tensor.shape[-2:]
+        self.tar_index = valid_entries
+        self.paths = valid_paths
+        self.raw_res = valid_raw_res
+        self.length = len(self.paths)
 
-        # Get prompt and extras from metadata
-        prompt = metadata.get("tag_string_general", "")
-        extras = metadata.copy()
+        print(f"DEBUG - Filtered to {len(self.paths)} valid entries in TarImageStore.")
+        if filtered_count > 0:
+            print(f"[TarImageStore] Filtered dataset to {len(self.paths)} entries based on metadata. {filtered_count} entries removed.")
+        else:
+            print(f"[TarImageStore] No entries were filtered out based on metadata.")
 
-        return False, img_tensor, prompt, (h, w), (0, 0), extras
+
+    def get_raw_entry_from_tar_entry(self, tar_entry):
+        tar_path, index_in_tar = tar_entry
+        with tarfile.open(tar_path, 'r') as tar:
+            member = tar.getmembers()[index_in_tar]
+            file = tar.extractfile(member)
+            _img = Image.open(io.BytesIO(file.read()))
+            metadata = {}
+            filename = Path(member.name).name
+
+            if self.metadata_json and Path(filename).stem in self.metadata_json:
+                metadata = self.metadata_json[Path(filename).stem]
+
+            if _img.mode != "RGB":
+                _img = _img.convert("RGB")
+
+            img = np.array(_img)
+            h, w = img.shape[:2]
+            prompt = metadata.get("tag_string_general", "")
+            extras = metadata.copy()
+
+            return False, torch.from_numpy(img), prompt, (h, w), (0, 0), extras
+
+
+    def get_raw_entry(self, index):
+        tar_path, index_in_tar = self.tar_index[index]
+        return self.get_raw_entry_from_tar_entry((tar_path, index_in_tar))
+
+
+    def __len__(self):
+        return self.length
+
+
+    def __getitem__(self, index):
+        return self._get_entry(index)
+
+
+    def setup_filehandles(self):
+        pass # Tar files are opened and closed within get_raw_entry, no need to keep file handles open
+
+
+    def get_batch_extras(self, path):
+        filename = os.path.basename(path) # 提取文件名
+        if self.metadata_json and filename in self.metadata_json:
+            return {"metadata": self.metadata_json[filename]} # 返回整个 metadata 条目
+        return {} # 默认返回空字典
+
+
+    @property
+    def image_paths(self): # 兼容性属性，返回 paths 的复制
+        return list(self.paths)
 
 class CombinedStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
