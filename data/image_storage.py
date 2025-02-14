@@ -122,10 +122,9 @@ class StoreBase(Dataset):
         cropped_sizes = []
         extras = []
 
-
-
         for e, i in zip(entries, indices):
             e = self.process_batch(e)
+            logger.debug(f"Prompt processed: {e.prompt}")
             e, dh, dw = self.crop(e, i)
             pixels.append(e.pixel)
             original_size = torch.asarray(e.original_size)
@@ -170,7 +169,7 @@ class StoreBase(Dataset):
         cropped_sizes = torch.stack(cropped_sizes)
         original_sizes = torch.stack(original_sizes)
         crop_pos = torch.stack(crop_pos)
-
+        
         return {
             "prompts": prompts,
             "pixels": pixel,
