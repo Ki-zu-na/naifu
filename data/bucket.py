@@ -167,9 +167,7 @@ class AspectRatioDataset(RatioDataset):
         target_ratio = self.to_ratio[i]
         h, w = self.ratio_to_bucket[target_ratio]
         if not entry.is_latent:
-            print(f"Crop function input {base_ratio}, {h}, {w}") # 添加日志
             resize_h, resize_w = self.fit_dimensions(base_ratio, h, w)
-            print(f"Crop function output {resize_h}, {resize_w}") # 添加日志
             # interp = InterpolationMode.BILINEAR if resize_h < H else InterpolationMode.BICUBIC
             # entry.pixel = Resize(
             #     size=(resize_h, resize_w), 

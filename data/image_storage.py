@@ -164,7 +164,7 @@ class StoreBase(Dataset):
             ), f"Latent mismatch in batch"
             assert (
                 e.pixel.shape == shape
-            ), f"Shape mismatch in batch: {e.pixel.shape} != {shape}. First image shape: {shape}" # Modified assertion message
+            ), f"Shape mismatch in batch: {e.pixel.shape} != {shape}. First image shape: {shape},all_shape: {[item.pixel.shape for item in entries]}" 
 
         pixel = torch.stack(pixels, dim=0).contiguous()
         cropped_sizes = torch.stack(cropped_sizes)
@@ -537,6 +537,7 @@ class TarImageStore(StoreBase):
         img = IMAGE_TRANSFORMS(img)
         h, w = img.shape[-2:]
         original_size = (h, w)
+        assert self.raw_res[index] == (h,w), f"Shape mismatch in batch: {self.raw_res[index]} != {original_size}"
         dhdw = (0, 0)
 
         # 获取 prompt 和 extras
