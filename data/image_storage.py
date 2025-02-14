@@ -461,26 +461,18 @@ class TarImageStore(StoreBase):
             for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
                 if is_img(Path(filename_in_tar)): # 仅处理图像文件
                     self.paths.append(filename_in_tar)
-                    # 尝试从 prompt_data 中获取 prompt 和分辨率，如果不存在则使用默认值
-                    if filename_in_tar in self.prompt_data:
-                        entry_data = self.prompt_data[filename_in_tar]
-                        height = entry_data.get('height', 512) # 默认高度
-                        width = entry_data.get('width', 512)   # 默认宽度
-                        self.raw_res.append((height, width))
-                    else:
-                        #  如果 prompt_data 中没有分辨率信息，则尝试从图像文件中获取
-                        try:
-                            with tarfile.open(tar_path, 'r') as tar_file_handle:
-                                tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
-                                tar_file_obj.seek(file_info['offset'])  # 定位到偏移量
-                                image_data = tar_file_obj.read(file_info['size'])  # 读取指定大小的数据
-                                fileobj = io.BytesIO(image_data) # 使用 BytesIO 包装字节数据
-                                _img = Image.open(fileobj)
-                                height, width = _img.size[1], _img.size[0]
-                                self.raw_res.append((height, width))
-                        except Exception as e:
-                            logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (1024, 1024)")
-                            self.raw_res.append((1024, 1024)) # 默认分辨率
+                    try:
+                        with tarfile.open(tar_path, 'r') as tar_file_handle:
+                            tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
+                            tar_file_obj.seek(file_info['offset'])  # 定位到偏移量
+                            image_data = tar_file_obj.read(file_info['size'])  # 读取指定大小的数据
+                            fileobj = io.BytesIO(image_data) # 使用 BytesIO 包装字节数据
+                            _img = Image.open(fileobj)
+                            height, width = _img.size[1], _img.size[0]
+                            self.raw_res.append((height, width))
+                    except Exception as e:
+                        logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (1024, 1024)")
+                        self.raw_res.append((1024, 1024)) # 默认分辨率
                     self.tar_index_map[index_counter] = (tar_path, filename_in_tar)
                     index_counter += 1
 
