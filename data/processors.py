@@ -198,7 +198,9 @@ def process_prompts_with_metadata(
     if 'tag_string_character' in extras and extras['tag_string_character']:
         fixed_tags.extend(add_prefix_to_tags(extras['tag_string_character'], "character"))
     if 'tag_string_copyright' in extras and extras['tag_string_copyright']:
-        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_copyright'], "copyright"))
+        copyright_tags = add_prefix_to_tags(extras['tag_string_copyright'], "copyright")
+        copyright_tags = [tag for tag in copyright_tags if "original" not in tag]
+        fixed_tags.extend(copyright_tags)
 
     flex_tags = []
     caption_nl = random.random() < caption_nl_prob
@@ -244,6 +246,7 @@ def process_prompts_with_metadata(
         random.shuffle(flex_tags)
 
     new_prompt = ", ".join(fixed_tags + flex_tags)
+    new_prompt = new_prompt.replace("_", " ") # 将下划线替换成空格
 
     return Entry(
         is_latent=data_entry.is_latent,

@@ -106,7 +106,7 @@ class SupervisedFineTune(StableDiffusionModel):
             from modules.losses.tag_loss import TagLossModule
             
             def is_special_tag(tag: str) -> bool:
-                return tag.startswith(("artist:", "character:", "style:"))
+                return tag.startswith(("artist:", "character:", "style:", "rating:", "copyright:"))
             
             self.tag_loss_module = TagLossModule(
                 check_fn=is_special_tag,
@@ -174,11 +174,14 @@ class SupervisedFineTune(StableDiffusionModel):
 
         # Predict the noise residual and calculate loss
         noisy_latents = noisy_latents.to(model_dtype)
-        
+
+
         if hasattr(self, "tag_loss_module"):
             # 更新全局步数
             self.tag_loss_module.global_step = self.global_step
             # 计算权重并应用
+            base_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none") 
+            base_loss = base_loss.mean([1, 2, 3]) 
             weights = self.tag_loss_module.calculate_loss_weights(
                 batch["prompts"],
                 base_loss.detach()
