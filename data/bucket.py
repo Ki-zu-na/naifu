@@ -256,7 +256,7 @@ class AdaptiveSizeDataset(RatioDataset):
     
     def crop(self, entry: Entry, i: int) -> Entry:
         assert self.to_size is not None, "to_ratio is not initialized"
-        logger.debug(f"Crop function input shape: {entry.pixel.shape}, original size: {(H, W)}") # 添加日志
+        print(f"Crop function input shape: {entry.pixel.shape}, original size: {(H, W)}") # 添加日志
         H, W = entry.pixel.shape[-2:]
         h, w = self.to_size[i]
         
@@ -285,7 +285,7 @@ class AdaptiveSizeDataset(RatioDataset):
             dh, dw = random.randint(0, H - bucket_height), random.randint(0, W - bucket_width)
 
         entry.pixel = entry.pixel[:, dh : dh + bucket_height, dw : dw + bucket_width]
-        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(bucket_height, bucket_width)}")
+        print(f"Cropped to shape: {entry.pixel.shape}, target shape: {(bucket_height, bucket_width)}")
         return entry, dh, dw
 
     def generate_buckets(self):
