@@ -306,6 +306,14 @@ class AdaptiveSizeDataset(RatioDataset):
                 img_width = math.floor(img_width * scale_factor / self.divisible) * self.divisible
                 img_height = math.floor(img_height * scale_factor / self.divisible) * self.divisible
 
+                # 确保缩放后的面积不超过 target_area
+                current_area = img_width * img_height
+                if current_area > self.target_area: # 再次检查，如果面积还是超了，就进一步缩小尺寸
+                    scale_factor = math.sqrt(self.target_area / current_area)
+                    img_width = math.floor(img_width * scale_factor / self.divisible) * self.divisible
+                    img_height = math.floor(img_height * scale_factor / self.divisible) * self.divisible
+
+
             bucket_width = img_width - img_width % self.divisible
             bucket_height = img_height - img_height % self.divisible
             reso = (bucket_width, bucket_height)
