@@ -523,6 +523,16 @@ class TarImageStore(StoreBase):
         print(f"Tar index built. Entries: {len(self.tar_index)}")
         print(f"filename_to_path built, Entries: {len(self.filename_to_path)}")
 
+        # 在构建完索引后，填充 raw_res
+        self.raw_res = []
+        for path in self.paths:
+            tar_path, member, _ = self.tar_index[str(path)]
+            with tarfile.open(tar_path, "r") as tf:
+                img_data = tf.extractfile(member).read()
+                img = Image.open(io.BytesIO(img_data))
+                w, h = img.size
+                self.raw_res.append((h, w))
+
     def get_raw_entry(self, index) -> tuple[bool, torch.Tensor, str, tuple[int, int], tuple[int, int], dict]:
         # Get filename and metadata
         filename = str(self.paths[index])
@@ -598,19 +608,7 @@ class CombinedStore(StoreBase):
             self.latent_store.setup_filehandles() # 确保文件句柄被初始化
 
         if self.load_tar:
-            tar_kwargs = kwargs.copy()
-            # 确保 tar_dirs 是列表，并从 kwargs 中获取
-            tar_dirs = self.kwargs.get("tar_dirs", [])
-            if isinstance(tar_dirs, (str, Path)):
-                tar_dirs = [tar_dirs]
-            # 显式传递 tar_dirs 和 metadata_json
-            self.tar_store = TarImageStore(
-                root_path,
-                *args,
-                tar_dirs=tar_dirs,
-                metadata_json=self.metadata_json_path,
-                **tar_kwargs
-            )
+            self.tar_store = TarImageStore(root_path, *args, **kwargs)
             self.tar_length = len(self.tar_store)
             self.tar_index_map = {
                 i: (current_index + i, "tar") for i in range(self.tar_length)
