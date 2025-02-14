@@ -598,11 +598,19 @@ class CombinedStore(StoreBase):
             self.latent_store.setup_filehandles() # 确保文件句柄被初始化
 
         if self.load_tar:
-            # Pop metadata_json from kwargs to avoid passing it twice
             tar_kwargs = kwargs.copy()
-            tar_kwargs.pop("metadata_json", None)
-            # 将 metadata_json_path 传递给 TarImageStore，让它自己处理过滤
-            self.tar_store = TarImageStore(root_path, *args, metadata_json=self.metadata_json_path, **tar_kwargs)
+            # 确保 tar_dirs 是列表，并从 kwargs 中获取
+            tar_dirs = self.kwargs.get("tar_dirs", [])
+            if isinstance(tar_dirs, (str, Path)):
+                tar_dirs = [tar_dirs]
+            # 显式传递 tar_dirs 和 metadata_json
+            self.tar_store = TarImageStore(
+                root_path,
+                *args,
+                tar_dirs=tar_dirs,
+                metadata_json=self.metadata_json_path,
+                **tar_kwargs
+            )
             self.tar_length = len(self.tar_store)
             self.tar_index_map = {
                 i: (current_index + i, "tar") for i in range(self.tar_length)
