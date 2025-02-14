@@ -85,19 +85,56 @@ class RatioDataset(Dataset):
                 img_width = math.floor(img_width * scale_factor)
                 img_height = math.floor(img_height * scale_factor)
 
-            # 确保尺寸是 divisible 的倍数
-            bucket_width = math.floor(img_width / self.divisible) * self.divisible
-            bucket_height = math.floor(img_height / self.divisible) * self.divisible
+            # 计算目标尺寸（确保是 divisible 的倍数）
+            target_width = math.floor(img_width / self.divisible) * self.divisible
+            target_height = math.floor(img_height / self.divisible) * self.divisible
             
             # 确保最小尺寸
-            bucket_width = max(self.divisible, bucket_width)
-            bucket_height = max(self.divisible, bucket_height)
+            target_width = max(self.divisible, target_width)
+            target_height = max(self.divisible, target_height)
             
-            reso = (bucket_width, bucket_height)
+            # 计算最接近的标准尺寸
+            standard_sizes = []
+            for scale in [0.8, 0.9, 1.0, 1.1, 1.2]:
+                w = math.floor(target_width * scale / self.divisible) * self.divisible
+                h = math.floor(target_height * scale / self.divisible) * self.divisible
+                if w * h <= self.target_area * 1.2:  # 允许面积有一定浮动
+                    standard_sizes.append((h, w))
+            
+            # 找到最接近原始宽高比的标准尺寸
+            original_ratio = img_height / img_width
+            min_ratio_diff = float('inf')
+            best_size = None
+            
+            for h, w in standard_sizes:
+                ratio = h / w
+                ratio_diff = abs(math.log(ratio / original_ratio))
+                if ratio_diff < min_ratio_diff:
+                    min_ratio_diff = ratio_diff
+                    best_size = (h, w)
+            
+            if best_size is None:
+                best_size = (target_height, target_width)
+                
+            reso = best_size
             self.bucket_content[reso].append(idx)
-            self.to_size[idx] = (bucket_height, bucket_width)  # 注意这里是 (height, width)
+            self.to_size[idx] = reso
 
-        self.bucket_content = [v for k, v in self.bucket_content.items()]
+        # 移除太小的桶
+        min_bucket_size = self.batch_size // 2
+        valid_buckets = {k: v for k, v in self.bucket_content.items() 
+                        if len(v) >= min_bucket_size}
+        
+        # 将小桶中的图像重新分配到最接近的大桶中
+        for k, v in self.bucket_content.items():
+            if k not in valid_buckets:
+                for idx in v:
+                    closest_bucket = min(valid_buckets.keys(),
+                                      key=lambda x: abs(x[0]/x[1] - k[0]/k[1]))
+                    valid_buckets[closest_bucket].append(idx)
+                    self.to_size[idx] = closest_bucket
+
+        self.bucket_content = list(valid_buckets.values())
 
     def init_batches(self):
         self.assign_buckets()
