@@ -471,7 +471,7 @@ class TarImageStore(StoreBase):
                         #  如果 prompt_data 中没有分辨率信息，则尝试从图像文件中获取
                         try:
                             with tarfile.open(tar_path, 'r') as tar_file_handle: # 在此处打开 tar 文件
-                                with tar_file_handle.extractfile(tarfile.TarInfo(filename_in_tar)) as fileobj: # 移除 offset 和 size 参数
+                                with tar_file_handle.extractfile(tarfile.TarInfo(filename_in_tar)) as fileobj: # 保持使用 TarInfo 对象
                                     _img = Image.open(fileobj)
                                     height, width = _img.size[1], _img.size[0] # PIL Image size 返回 (width, height)
                                     self.raw_res.append((height, width))
