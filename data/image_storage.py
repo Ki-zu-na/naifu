@@ -430,6 +430,16 @@ class TarImageStore(StoreBase):
         self.tar_index = [] # 存储 tar 文件索引信息，每个元素是 (tar_path, index_in_tar)
         self.length = 0
 
+        print(f"[TarImageStore] Initial tar_dirs: {self.tar_dirs}") # 调试日志：打印初始 tar_dirs
+
+        # 确保 tar_dirs 是一个列表
+        if isinstance(self.tar_dirs, str):
+            self.tar_dirs = [self.tar_dirs]
+        elif not isinstance(self.tar_dirs, list):
+            raise TypeError("tar_dirs should be a string or a list of strings")
+
+        print(f"[TarImageStore] Processed tar_dirs: {self.tar_dirs}") # 调试日志：打印处理后的 tar_dirs，确认是否为列表
+
         if self.metadata_json_path:
             try:
                 with open(self.metadata_json_path, 'r', encoding='utf-8') as f:
@@ -532,7 +542,7 @@ class TarImageStore(StoreBase):
             filename = Path(member.name).name
 
             if self.metadata_json and Path(filename).stem in self.metadata_json:
-                metadata = self.metadata_json[Path(filename).stem]
+                 metadata = self.metadata_json[Path(filename).stem]
 
             if _img.mode != "RGB":
                 _img = _img.convert("RGB")
