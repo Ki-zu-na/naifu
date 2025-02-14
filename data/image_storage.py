@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import tarfile
 import io
-
+import tarfile
 from tqdm.auto import tqdm
 from dataclasses import dataclass
 from pathlib import Path
@@ -468,7 +468,16 @@ class TarImageStore(StoreBase):
                         width = entry_data.get('width', 512)   # 默认宽度
                         self.raw_res.append((height, width))
                     else:
-                        self.raw_res.append((512, 512)) # 默认分辨率
+                        #  如果 prompt_data 中没有分辨率信息，则尝试从图像文件中获取
+                        try:
+                            with tarfile.open(tar_path, 'r') as tar_file_handle: # 在此处打开 tar 文件
+                                with tar_file_handle.extractfile(tarfile.TarInfo(filename_in_tar), file_info['offset'], file_info['size']) as fileobj:
+                                    _img = Image.open(fileobj)
+                                    height, width = _img.size[1], _img.size[0] # PIL Image size 返回 (width, height)
+                                    self.raw_res.append((height, width))
+                        except Exception as e:
+                            logger.warning(f"无法从图像文件 {filename_in_tar} 中获取分辨率: {e}, 使用默认分辨率 (512, 512)")
+                            self.raw_res.append((512, 512)) # 默认分辨率
                     self.tar_index_map[index_counter] = (tar_path, filename_in_tar)
                     index_counter += 1
 
