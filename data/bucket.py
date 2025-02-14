@@ -244,32 +244,7 @@ class AdaptiveSizeDataset(RatioDataset):
         super().__init__(batch_size, img_path, ucg, rank, dtype, seed, **kwargs)
         # 如果配置中传入了 metadata_json 参数，则加载 json 数据（但不弹出，保证 TarImageStore 可以使用）
         self.metadata = None # 移除此处 metadata 加载和过滤逻辑
-        # if "metadata_json" in kwargs: # 移除此处 metadata 加载和过滤逻辑
-        #     metadata_path = kwargs["metadata_json"] # 移除此处 metadata 加载和过滤逻辑
-        #     import json # 移除此处 metadata 加载和过滤逻辑
-        #     with open(metadata_path, 'r', encoding='utf-8') as f: # 移除此处 metadata 加载和过滤逻辑
-        #         self.metadata = json.load(f) # 移除此处 metadata 加载和过滤逻辑
-        #     # 此处假设 json keys 为图像的唯一标识（例如文件名，不包含扩展名） # 移除此处 metadata 加载和过滤逻辑
-        #     print( # 移除此处 metadata 加载和过滤逻辑
-        #         f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata." # 移除此处 metadata 加载和过滤逻辑
-        #     ) # 移除此处 metadata 加载和过滤逻辑
-        #     print(f"[AdaptiveSizeDataset] First 10 filtered paths: {self.store.paths[:10]}") # 添加打印前 10 个路径 # 移除此处 metadata 加载和过滤逻辑
-        #     if not self.store.paths: # 移除此处 metadata 加载和过滤逻辑
-        #         print("[AdaptiveSizeDataset] WARNING: Filtered dataset paths is EMPTY!") # 添加警告信息 # 移除此处 metadata 加载和过滤逻辑
 
-        # # 如果 metadata 有效，则根据 json 中的标识过滤 self.store.paths # 移除此处 metadata 加载和过滤逻辑
-        # if self.metadata is not None: # 移除此处 metadata 加载和过滤逻辑
-        #     valid_ids = set(self.metadata.keys()) # 移除此处 metadata 加载和过滤逻辑
-        #     from pathlib import Path # 移除此处 metadata 加载和过滤逻辑
-
-        #     # 提取文件名和扩展名进行比较 # 移除此处 metadata 加载和过滤逻辑
-        #     filtered_paths = [ # 移除此处 metadata 加载和过滤逻辑
-        #         p for p in self.store.paths if os.path.basename(str(p)) in valid_ids # 移除此处 metadata 加载和过滤逻辑
-        #     ] # 移除此处 metadata 加载和过滤逻辑
-        #     self.store.paths = filtered_paths # 移除此处 metadata 加载和过滤逻辑
-        #     print( # 移除此处 metadata 加载和过滤逻辑
-        #         f"[AdaptiveSizeDataset] Filtered dataset: {len(self.store.paths)} images found based on metadata." # 移除此处 metadata 加载和过滤逻辑
-        #     ) # 移除此处 metadata 加载和过滤逻辑
         self.store.crop = self.crop
         self.target_area = target_area
         self.divisible = divisible
@@ -334,6 +309,5 @@ class AdaptiveSizeDataset(RatioDataset):
             reso = (bucket_width, bucket_height)
             self.bucket_content[reso].append(idx)
             self.to_size[idx] = (bucket_width, bucket_height)
-        print(f"[AdaptiveSizeDataset] Bucket Content: {self.bucket_content}") # 打印 bucket 内容
-        print(f"[AdaptiveSizeDataset] To Size Mapping (first 10): {dict(list(self.to_size.items())[:10])}") # 打印 to_size 映射
+
         self.bucket_content = [v for k, v in self.bucket_content.items()]
