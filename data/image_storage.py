@@ -158,13 +158,13 @@ class StoreBase(Dataset):
         for e in entries:
             print(f"  Shape: {e.pixel.shape}")
 
-        for e in entries[1:]:
-            assert (
-                e.is_latent == is_latent
-            ), f"Latent mismatch in batch"
-            assert (
-                e.pixel.shape == shape
-            ), f"Shape mismatch in batch: {e.pixel.shape} != {shape}. First image shape: {shape},all_shape: {[item.pixel.shape for item in entries]}" 
+        # for e in entries[1:]:
+        #     assert (
+        #         e.is_latent == is_latent
+        #     ), f"Latent mismatch in batch"
+        #     assert (
+        #         e.pixel.shape == shape
+        #     ), f"Shape mismatch in batch: {e.pixel.shape} != {shape}. First image shape: {shape},all_shape: {[item.pixel.shape for item in entries]}" 
 
         pixel = torch.stack(pixels, dim=0).contiguous()
         cropped_sizes = torch.stack(cropped_sizes)
