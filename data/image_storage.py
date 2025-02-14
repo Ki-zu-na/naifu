@@ -437,7 +437,6 @@ class TarImageStore(StoreBase):
         self.tar_file_metas = {} # 用于存储 tar 文件元数据 (offset 信息)
         self.paths = [] # 存储文件路径 (在 tar 中的文件名)
         self.raw_res = [] # 存储原始分辨率
-        self.tar_filehandles = {} # 存储 tarfile file handles
         self.tar_index_map = {} # 索引到 (tar_path, filename_in_tar) 的映射
 
         index_counter = 0
@@ -462,7 +461,7 @@ class TarImageStore(StoreBase):
                 if is_img(Path(filename_in_tar)): # 仅处理图像文件
                     self.paths.append(filename_in_tar)
                     try:
-                        with tarfile.open(tar_path, 'r') as tar_file_handle:
+                        with tarfile.open(tar_path, 'r') as tar_file_handle: #  打开 tar 文件
                             tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
                             tar_file_obj.seek(file_info['offset'])  # 定位到偏移量
                             image_data = tar_file_obj.read(file_info['size'])  # 读取指定大小的数据
@@ -490,52 +489,29 @@ class TarImageStore(StoreBase):
         self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
 
 
-    def setup_filehandles(self):
-        self.tar_filehandles = {}
-        for tar_path in self.tar_paths:
-            try:
-                self.tar_filehandles[tar_path] = tarfile.open(tar_path, 'r')
-            except Exception as e:
-                logger.error(f"Failed to open tar file {tar_path}: {e}")
-                self.tar_filehandles[tar_path] = None # 标记为 None 或其他错误处理
-
-
     def get_raw_entry(self, index) -> tuple[bool, torch.tensor, str, tuple[int, int], tuple[int, int], dict]:
-        if not self.tar_filehandles:
-            self.setup_filehandles()
-
         tar_path, filename_in_tar = self.tar_index_map[index]
         tar_meta = self.tar_file_metas[tar_path]
         file_meta = tar_meta['files'][filename_in_tar]
-
-        if tar_path not in self.tar_filehandles or self.tar_filehandles[tar_path] is None:
-            logger.error(f"Tar file handle is not available for {tar_path}. Re-attempting to open.")
-            try:
-                self.tar_filehandles[tar_path] = tarfile.open(tar_path, 'r') # 尝试重新打开
-                if self.tar_filehandles[tar_path] is None: # 再次检查是否打开失败
-                    raise Exception(f"Failed to re-open tar file {tar_path}")
-            except Exception as e:
-                raise RuntimeError(f"Critical error re-opening tar file {tar_path}: {e}") from e # 抛出异常，停止处理
-
-        tar_file_handle = self.tar_filehandles[tar_path]
 
         offset = file_meta['offset']
         size = file_meta['size']
 
         try:
-            with tar_file_handle.fileobj as tar_file_obj: #  使用 tar_file_handle.fileobj
-                tar_file_obj.seek(offset)
-                image_data = tar_file_obj.read(size)
-                fileobj = io.BytesIO(image_data)
-                _img = Image.open(fileobj)
-                if _img.mode == "RGB":
-                    img = np.array(_img)
-                elif _img.mode == "RGBA":
-                    baimg = Image.new('RGB', _img.size, (255, 255, 255))
-                    baimg.paste(_img, (0, 0), _img)
-                    img = np.array(baimg)
-                else:
-                    img = np.array(_img.convert("RGB"))
+            with tarfile.open(tar_path, 'r') as tar_file_handle: # 在这里打开 tar 文件
+                with tar_file_handle.fileobj as tar_file_obj: #  使用 tar_file_handle.fileobj
+                    tar_file_obj.seek(offset)
+                    image_data = tar_file_obj.read(size)
+                    fileobj = io.BytesIO(image_data)
+                    _img = Image.open(fileobj)
+                    if _img.mode == "RGB":
+                        img = np.array(_img)
+                    elif _img.mode == "RGBA":
+                        baimg = Image.new('RGB', _img.size, (255, 255, 255))
+                        baimg.paste(_img, (0, 0), _img)
+                        img = np.array(baimg)
+                    else:
+                        img = np.array(_img.convert("RGB"))
         except Exception as e:
             logger.error(f"Error reading image {filename_in_tar} from {tar_path}: {e}")
             # 返回一个占位符图像或引发异常，根据您的错误处理策略
