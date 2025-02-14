@@ -122,7 +122,7 @@ class StoreBase(Dataset):
         cropped_sizes = []
         extras = []
 
-        first_shape = None  # 用于记录第一个图像的形状
+
 
         for e, i in zip(entries, indices):
             e = self.process_batch(e)
