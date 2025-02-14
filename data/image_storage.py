@@ -450,8 +450,6 @@ class TarImageStore(StoreBase):
         self.tar_index = {}       # mapping: member.name -> (tar_path, TarInfo, file_info)
         self.filename_to_path = {}
 
-        # Build tar index from tar_dirs, considering each tar file's associated JSON metadata.
-        self._build_tar_index()
 
         # 过滤掉不在全局 metadata_json 中的条目 (只有当 metadata_json_path 存在时才进行过滤)
         if self.metadata_json_path and self.json_data:
@@ -460,7 +458,8 @@ class TarImageStore(StoreBase):
         else: # 如果没有 metadata_json_path 或者 json_data 为空，则不过滤，使用所有 tar 文件中的条目
             self.paths = [Path(name) for name in self.tar_index if Path(name).is_file()] # 确保只包含文件路径
             print(f"TarImageStore loaded all {len(self.paths)} entries from tar files without metadata filtering.")
-
+        # Build tar index from tar_dirs, considering each tar file's associated JSON metadata.
+        self._build_tar_index()
         self.length = len(self.paths)
         logger.debug(f"Filtered to {self.length} valid entries in TarImageStore.")
 
