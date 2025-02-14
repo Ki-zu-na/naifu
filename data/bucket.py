@@ -319,8 +319,8 @@ class AdaptiveSizeDataset(RatioDataset):
     
     def crop(self, entry: Entry, i: int) -> Entry:
         assert self.to_size is not None, "to_ratio is not initialized"
-        logger.debug(f"Crop function input shape: {entry.pixel.shape}, original size: {(H, W)}") # 添加日志
         H, W = entry.pixel.shape[-2:]
+        logger.debug(f"Crop function input shape: {entry.pixel.shape}, original size: {(H, W)}") # 添加日志
         h, w = self.to_size[i]
         
         # 确保目标尺寸是 divisible 的倍数
