@@ -164,48 +164,59 @@ def shuffle_prompts_dan_native_style(data_entry: Entry, dan_probability: float =
     return shuffle_prompts_sdstyle(new_entry)
 
 def process_prompts_with_metadata(
-    data_entry: Entry, 
+    data_entry: Entry,
 ) -> Entry:
-    
+
     shuffle_caption = True
     # New parameters for dropping all tags before or after keep_tokens_separator
     drop_all_fixed_prob = 0.05  # Probability to drop all fixed tokens
     drop_all_flex_prob = 0.15    # Probability to drop all flex tokens
     drop_artist_prob = 0.05
     dropout_rate = 0.15
-    caption_nl_prob = 0.3
+    caption_nl_prob = 0.5
     style_mix_prob = 0.5
+    add_fixed_prefix_prob = 0.3
 
     if not data_entry.extras:
         return data_entry
-    
+
     extras = data_entry.extras
 
-    
     fixed_tags = []
     drop_artist = random.random() < drop_artist_prob
-    if 'tag_string_artist' in extras and extras['tag_string_artist'] and not drop_artist:
-        fixed_tags.append(extras['tag_string_artist'])
-    if 'tag_string_character' in extras and extras['tag_string_character']:
-        fixed_tags.append(extras['tag_string_character'])
-    if 'tag_string_copyright' in extras and extras['tag_string_copyright']:
-        fixed_tags.append(extras['tag_string_copyright'])
 
-    
+    def add_prefix_to_tags(tags_str, prefix):
+        if not tags_str:
+            return []
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+        if random.random() < add_fixed_prefix_prob:
+            return [f"{prefix}:{tag}" for tag in tags]
+        return tags
+
+    if 'tag_string_artist' in extras and extras['tag_string_artist'] and not drop_artist:
+        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_artist'], "artist"))
+    if 'tag_string_character' in extras and extras['tag_string_character']:
+        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_character'], "character"))
+    if 'tag_string_copyright' in extras and extras['tag_string_copyright']:
+        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_copyright'], "copyright"))
+
     flex_tags = []
     caption_nl = random.random() < caption_nl_prob
     style_mix = random.random() < style_mix_prob
     if 'tag_string_general' in extras and extras['tag_string_general'] and not caption_nl:
         flex_tags = [t.strip() for t in extras['tag_string_general'].split(",") if t.strip()]
         if  'rating' in extras and extras['rating']:
-            if extras['rating'] == 'e':
-                flex_tags.append('explicit')
-            elif extras['rating'] == 's':
-                flex_tags.append('sensitive')
-            elif extras['rating'] == 'q':
-                flex_tags.append('questionable')
-            elif extras['rating'] == 'g':
-                flex_tags.append('safe')
+            rating_tags = []
+            rating = extras['rating']
+            if rating == 'e':
+                rating_tags = ["explicit"]
+            elif rating == 's':
+                rating_tags = ["sensitive"]
+            elif rating == 'q':
+                rating_tags = ["nsfw"] 
+            elif rating == 'g':
+                rating_tags = ["safe"]
+            flex_tags.extend(add_prefix_to_tags(", ".join(rating_tags), "rating")) # rating 作为一个整体添加前缀
         if 'aes_rating' in extras and extras['aes_rating']:
             flex_tags.append(extras['aes_rating'])
         if 'tag_string_meta' in extras and extras['tag_string_meta']:
@@ -216,8 +227,6 @@ def process_prompts_with_metadata(
             flex_tags.append(extras['regular_summary'])
         elif 'brief_summary' in extras and extras['brief_summary'] and style_mix:
             flex_tags.append(extras['brief_summary'])
-
-
 
     # Decide whether to drop all fixed or flex tokens
     drop_all_fixed = random.random() < drop_all_fixed_prob
@@ -235,9 +244,7 @@ def process_prompts_with_metadata(
         random.shuffle(flex_tags)
 
     new_prompt = ", ".join(fixed_tags + flex_tags)
-    
 
-    
     return Entry(
         is_latent=data_entry.is_latent,
         pixel=data_entry.pixel,
