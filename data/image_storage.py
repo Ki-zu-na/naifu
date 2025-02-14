@@ -421,16 +421,16 @@ class DirectoryImageStore(StoreBase):
 class TarImageStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
         super().__init__(root_path, *args, **kwargs)
-        self.prompt_json_path = kwargs.get("prompt_json_path")  # 指定文件json路径
+        self.metadata_json_path = kwargs.get("metadata_json")  # 指定文件json路径
         self.prompt_data = {}
-        if self.prompt_json_path:
+        if self.metadata_json_path:
             try:
-                with open(self.prompt_json_path, 'r') as f:
+                with open(self.metadata_json_path, 'r') as f:
                     self.prompt_data = json_lib.load(f)
             except FileNotFoundError:
-                logger.warning(f"Prompt JSON file not found: {self.prompt_json_path}")
+                logger.warning(f"Prompt JSON file not found: {self.metadata_json_path}")
             except json.JSONDecodeError:
-                logger.error(f"Error decoding JSON in {self.prompt_json_path}. Please ensure it is valid JSON.")
+                logger.error(f"Error decoding JSON in {self.metadata_json_path}. Please ensure it is valid JSON.")
                 self.prompt_data = {}
 
         self.tar_paths = list(dirwalk(self.root_path, lambda p: p.suffix == ".tar"))
