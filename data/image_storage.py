@@ -153,17 +153,6 @@ class StoreBase(Dataset):
         is_latent = entries[0].is_latent
         shape = entries[0].pixel.shape
         logger.debug(f"Batch first image shape: {shape}")
-        first_shape = shape  # 记录第一个图像的形状
-
-        # Debugging: Print shapes before assertion
-        print("Batch shapes before assertion:")
-        for e in entries:
-            print(f"  Shape: {e.pixel.shape}")
-
-        # Debugging: Print shapes before assertion
-        print("Batch shapes before assertion:")
-        for e in entries:
-            print(f"  Shape: {e.pixel.shape}")
 
         # Debugging: Print shapes before assertion
         print("Batch shapes before assertion:")
