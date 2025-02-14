@@ -154,9 +154,9 @@ class StoreBase(Dataset):
         shape = entries[0].pixel.shape
 
         # Debugging: Print shapes before assertion
-        print("Batch shapes before assertion:")
-        for e in entries:
-            print(f"  Shape: {e.pixel.shape}")
+        # print("Batch shapes before assertion:")
+        # for e in entries:
+        #     print(f"  Shape: {e.pixel.shape}")
 
         # for e in entries[1:]:
         #     assert (
