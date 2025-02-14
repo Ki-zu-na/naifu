@@ -580,7 +580,8 @@ class TarImageStore(StoreBase):
 class CombinedStore(StoreBase):
     def __init__(self, root_path, *args, **kwargs):
         super().__init__(root_path, *args, **kwargs)
-        self._combined_paths = None  # 用于存储手动设置的 paths
+        self._combined_paths = []  # 用于存储合并后的 paths
+        self._combined_raw_res = [] # 用于存储合并后的 raw_res
 
         self.metadata_json_path = self.kwargs.get("metadata_json")
         self.tar_dirs = self.kwargs.get("tar_dirs", [])
@@ -625,30 +626,25 @@ class CombinedStore(StoreBase):
 
         self.length = current_index  # Total length of the combined dataset
 
+        # 合并所有子 Store 的 paths 和 raw_res
+        if self.latent_store is not None:
+            self._combined_paths.extend(self.latent_store.paths)
+            self._combined_raw_res.extend(self.latent_store.raw_res)
+        if self.tar_store is not None:
+            self._combined_paths.extend(self.tar_store.paths)
+            self._combined_raw_res.extend(self.tar_store.raw_res)
+        if self.directory_store is not None:
+            self._combined_paths.extend(self.directory_store.paths)
+            self._combined_raw_res.extend(self.directory_store.raw_res)
+
+        self.paths = self._combined_paths # 直接赋值，paths 不再是 property
+        self.raw_res = self._combined_raw_res # 直接赋值，raw_res 也不再是 property
+
         # 设置 dan_probability，可以从 kwargs 中获取或使用默认值 (为 process_batch_fn 做准备)
         dan_probability = kwargs.get('dan_probability', 0.7)
 
         # 创建一个偏函数，固定 dan_probability 参数
         self.process_entry = partial(shuffle_prompts_dan_native_style, dan_probability=dan_probability)
-
-    @property
-    def paths(self):
-        # 如果已经手动设置过，则直接返回，否则聚合子 store 的 paths
-        if self._combined_paths is not None:
-            return self._combined_paths
-        all_paths = []
-        if self.latent_store is not None:
-            all_paths += self.latent_store.paths
-        if self.tar_store is not None:
-            all_paths += self.tar_store.paths
-        if self.directory_store is not None:
-            all_paths += self.directory_store.paths
-        return all_paths
-
-    @paths.setter
-    def paths(self, value):
-        # 将赋值操作存储到 _combined_paths 中
-        self._combined_paths = value
 
     def get_raw_entry(self, index):
         # Determine which store to use based on the index
@@ -695,7 +691,7 @@ class CombinedStore(StoreBase):
 
     def __len__(self):
         return self.length
-    
+
     def setup_filehandles(self):  # 新增方法
         if self.latent_store:
             self.latent_store.setup_filehandles()
