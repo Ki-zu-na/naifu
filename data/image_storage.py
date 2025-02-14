@@ -122,6 +122,8 @@ class StoreBase(Dataset):
         cropped_sizes = []
         extras = []
 
+        first_shape = None  # 用于记录第一个图像的形状
+
         for e, i in zip(entries, indices):
             e = self.process_batch(e)
             e, dh, dw = self.crop(e, i)
@@ -151,13 +153,14 @@ class StoreBase(Dataset):
         is_latent = entries[0].is_latent
         shape = entries[0].pixel.shape
         logger.debug(f"Batch first image shape: {shape}")
+        first_shape = shape  # 记录第一个图像的形状
 
         for e in entries[1:]:
             logger.debug(f"Image shape in batch: {e.pixel.shape}")
             assert e.is_latent == is_latent
             assert (
                 e.pixel.shape == shape
-            ), f"{e.pixel.shape} != {shape} for the same batch"
+            ), f"Shape mismatch in batch: {e.pixel.shape} != {shape}. First image shape: {first_shape}" # 改进 assertion 错误信息
 
         pixel = torch.stack(pixels, dim=0).contiguous()
         cropped_sizes = torch.stack(cropped_sizes)

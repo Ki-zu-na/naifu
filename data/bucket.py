@@ -322,13 +322,16 @@ class AdaptiveSizeDataset(RatioDataset):
         H, W = entry.pixel.shape[-2:]
         logger.debug(f"Crop function input shape: {entry.pixel.shape}, original size: {(H, W)}") # 添加日志
         h, w = self.to_size[i]
-        
+        logger.debug(f"Target size from to_size: {(h, w)}") # 添加日志，记录目标尺寸
+
         # 确保目标尺寸是 divisible 的倍数
         bucket_width = math.floor(w / self.divisible) * self.divisible
         bucket_height = math.floor(h / self.divisible) * self.divisible
-        
+        logger.debug(f"Bucket size after divisible: {(bucket_height, bucket_width)}") # 添加日志，记录 divisible 后的 bucket 尺寸
+
         if not entry.is_latent:
             resize_h, resize_w = bucket_height, bucket_width
+            logger.debug(f"Resize target size: {(resize_h, resize_w)}") # 添加日志，记录 resize 目标尺寸
             pixel = entry.pixel
             if isinstance(pixel, torch.Tensor):
                 pixel = pixel.permute(1, 2, 0).cpu().numpy()
@@ -339,6 +342,7 @@ class AdaptiveSizeDataset(RatioDataset):
         else:
             bucket_height = bucket_height // 8
             bucket_width = bucket_width // 8
+            logger.debug(f"Latent crop size: {(bucket_height, bucket_width)}") # 添加日志，记录 latent 裁剪尺寸
 
         H, W = entry.pixel.shape[-2:]
         if self.use_central_crop:
@@ -348,7 +352,7 @@ class AdaptiveSizeDataset(RatioDataset):
             dh, dw = random.randint(0, H - bucket_height), random.randint(0, W - bucket_width)
 
         entry.pixel = entry.pixel[:, dh : dh + bucket_height, dw : dw + bucket_width]
-        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(bucket_height, bucket_width)}")
+        logger.debug(f"Cropped to shape: {entry.pixel.shape}, target shape: {(bucket_height, bucket_width)}") # 添加日志，记录最终裁剪形状和目标形状
         return entry, dh, dw
 
     def generate_buckets(self):
