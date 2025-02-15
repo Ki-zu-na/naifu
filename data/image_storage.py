@@ -225,7 +225,15 @@ class StoreBase(Dataset):
 class LatentStore(StoreBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        prompt_mapping = next(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
+        self.latent_json_path = kwargs.get("latent_json", None)
+        if self.latent_json_path:
+            # 从指定的 JSON 文件加载 latent 信息
+            prompt_mapping_path = Path(self.latent_json_path)
+            if not prompt_mapping_path.exists():
+                logger.warning (f"Latent JSON file not found: {self.latent_json_path}, use default latent json file")
+                prompt_mapping = next(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
+        else:
+            prompt_mapping = next(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
         prompt_mapping = json_lib.loads(Path(prompt_mapping).read_text())
 
         self.h5_paths = list(
@@ -309,9 +317,9 @@ class LatentStore(StoreBase):
         # 获取额外信息
         extras = self.get_batch_extras(self.paths[index])
         
-        # 添加必要的信息到 extras
-        extras['train_caption_dan'] = entry.get('train_caption_dan', prompt)
-        extras['train_caption_native'] = entry.get('train_caption_native', prompt)
+        # 复制必要的信息到 extras
+        if 'extra' in entry:
+            extras.update(entry['extra'])
 
         return True, latent, prompt, original_size, dhdw, extras
 
