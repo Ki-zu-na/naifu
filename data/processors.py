@@ -224,12 +224,27 @@ def process_prompts_with_metadata(
             flex_tags.append(extras['aes_rating'])
         if 'tag_string_meta' in extras and extras['tag_string_meta']:
             flex_tags.append(extras['tag_string_meta'])
+        if 'yeartag' in extras and extras['yeartag']:
+            flex_tags.append(extras['yeartag'])
+        if 'year_tag_specific' in extras and extras['year_tag_specific']:
+            flex_tags.append(extras['year_tag_specific'])
 
-    elif 'regular_summary' in extras and extras['regular_summary'] and caption_nl:
-        if 'regular_summary' in extras and extras['regular_summary']:
-            flex_tags.append(extras['regular_summary'])
-        elif 'brief_summary' in extras and extras['brief_summary'] and style_mix:
-            flex_tags.append(extras['brief_summary'])
+        if shuffle_caption:
+            random.shuffle(flex_tags)
+        flex_tags = dropout_tags(flex_tags, dropout_rate)
+
+        if 'regular_summary' in extras and extras['regular_summary'] and 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
+            if style_mix:
+                flex_tags = [extras['brief_summary']]
+            else:
+                flex_tags = [extras['regular_summary']]
+        elif 'regular_summary' in extras and extras['regular_summary'] and caption_nl:
+            flex_tags = [extras['regular_summary']]
+        elif 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
+            flex_tags = [extras['brief_summary']]
+
+    else:
+        flex_tags = [] # 处理 tag_string_general 缺失的情况，虽然按理说应该存在。
 
     # Decide whether to drop all fixed or flex tokens
     drop_all_fixed = random.random() < drop_all_fixed_prob
@@ -240,11 +255,9 @@ def process_prompts_with_metadata(
 
     if drop_all_flex:
         flex_tags = []
-    else:
-        flex_tags = dropout_tags(flex_tags, dropout_rate)
+    
     if shuffle_caption:
         random.shuffle(fixed_tags)
-        random.shuffle(flex_tags)
 
     new_prompt = ", ".join(fixed_tags + flex_tags)
     new_prompt = new_prompt.replace("_", " ") # 将下划线替换成空格
