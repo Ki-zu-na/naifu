@@ -12,9 +12,43 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
+
+    # 新增代码：检查是否需要预先缓存 latent
+    if config.advanced.get("cache_latents_before_train", False):
+        latent_cache_dir = config.advanced.get("latent_cache_dir", "latent_cache")
+        img_path = config.dataset.get("img_path") # 假设你的配置文件中 dataset 部分有 img_path 指向图像目录
+        if not img_path:
+            raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
+
+        # 构建 encode_latents_xl_ab.py 脚本的命令行参数
+        encode_script_path = "scripts/encode_latents_xl_ab.py" # 假设脚本路径
+        output_path = latent_cache_dir
+        command = [
+            "python",
+            encode_script_path,
+            "-i", img_path,
+            "-o", output_path,
+            "-d", "bfloat16",
+            "-nu" 
+        ]
+        logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
+        logger.info(f"执行命令: {' '.join(command)}")
+
+        # 执行脚本 (你需要确保你的环境可以执行这个命令)
+        import subprocess
+        subprocess.run(command, check=True) # check=True 会在命令执行失败时抛出异常
+        logger.info(f"Latent 预缓存完成，缓存目录: {latent_cache_dir}")
+
+        # 修改 dataset 配置，使其从 latent 缓存目录加载
+        config.dataset.img_path = latent_cache_dir #  dataset 的 img_path 指向 latent 缓存目录
+        config.dataset.load_latent = True #  告知 dataset 加载 latent 而不是图像
+        config.dataset.pop("load_directory", None) # 移除 load_directory 配置，如果存在
+        config.dataset.pop("load_tar", None) # 移除 load_tar 配置，如果存在
+
+
     model = SupervisedFineTune(
-        model_path=model_path, 
-        config=config, 
+        model_path=model_path,
+        config=config,
         device=fabric.device
     )
     dataset_class = get_class(config.dataset.get("name", "data.AspectRatioDataset"))
