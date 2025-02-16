@@ -23,7 +23,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
         use_tar = config.dataset.get("load_tar", False)
         # 构建 encode_latents_xl_ab.py 脚本的命令行参数
-        encode_script_path = "scripts/encode_latents_xl_ab.py" # 假设脚本路径
+        encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
         output_path = latent_cache_dir
         command = [
             "python",
