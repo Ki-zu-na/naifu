@@ -352,7 +352,13 @@ class Trainer:
                     
                 with fabric.no_backward_sync(fabric_module, enabled=is_accumulating):
                 # with torch.autograd.detect_anomaly():
-                    loss = self.model(batch)
+                    loss = self.model(batch) 
+                    
+                    # 检查loss是否为NaN
+                    if torch.isnan(loss):
+                        logger.warning(f"检测到NaN loss，跳过当前batch (epoch: {self.current_epoch}, step: {batch_idx})")
+                        continue
+                        
                     self.fabric.backward(loss / grad_accum_steps)
 
                 loss = loss.detach().item()
