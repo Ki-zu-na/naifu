@@ -28,7 +28,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         command = [
             "python",
             encode_script_path,
-            "-i", img_path if use_tar else tar_dirs,
+            "-i", tar_dirs if use_tar else img_path,
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
