@@ -199,5 +199,10 @@ class SupervisedFineTune(StableDiffusionModel):
         else:
             loss = base_loss.mean()
 
+        if torch.isnan(loss).any() or torch.isinf(loss).any():
+            logger.warning("Warning: NaN or Inf loss encountered, skipping this batch.")
+            # 返回一个零 loss, 这样梯度更新不会改变模型参数
+            return torch.tensor(0.0, device=loss.device, requires_grad=True)
+        
         return loss
 
