@@ -12,9 +12,13 @@ from pathlib import Path
 from modules.sdxl_model import StableDiffusionModel
 from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
+import subprocess
+import torch.distributed as dist
+from common.distributed_cache import distributed_cache_tars, process_function
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
+    # 新增代码：检查是否需要预先缓存 latent
     # 新增代码：检查是否需要预先缓存 latent
     if config.advanced.get("cache_latents_before_train", False):
         latent_cache_dir = config.advanced.get("latent_cache_dir", "latent_cache")
@@ -24,25 +28,31 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         if not img_path:
             raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
         use_tar = config.dataset.get("load_tar", False)
-        # 构建 encode_latents_xl_ab.py 脚本的命令行参数
-        encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
-        output_path = latent_cache_dir
-        command = [
-            "python",
-            encode_script_path,
-            "-i", tar_dirs if use_tar else img_path,
-            "-metadata", metadata_path,
-            "-o", output_path,
-            "-d", "bfloat16",
-            "-nu", "-ut" if use_tar else ""
-        ]
-        logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
-        logger.info(f"执行命令: {' '.join(command)}")
 
-        # 执行脚本 (你需要确保你的环境可以执行这个命令)
-        import subprocess
-        subprocess.run(command, check=True) # check=True 会在命令执行失败时抛出异常
-        logger.info(f"Latent 预缓存完成，缓存目录: {latent_cache_dir}")
+        if use_tar:
+            from pathlib import Path
+            tar_dir_path = Path(tar_dirs)
+            tar_files = sorted([str(p) for p in tar_dir_path.glob("*.tar")])
+        else:
+            tar_files = []
+
+        if use_tar:
+            logger.info(f"开始分布式缓存 tar 文件，共找到 {len(tar_files)} 个 tar 文件")
+            distributed_cache_tars(tar_files, latent_cache_dir, process_function)
+        else:
+            command = [
+                "python",
+                "scripts/encode_latents_xl_tar.py",  # 假设脚本路径
+                "-i", img_path,
+                "-metadata", metadata_path,
+                "-o", latent_cache_dir,
+                "-d", "bfloat16",
+                "-nu"
+            ]
+            logger.info(f"执行命令: {' '.join(command)}")
+            subprocess.run(command, check=True)
+        
+        logger.info(f"Latent预缓存完成，缓存目录: {latent_cache_dir}")
 
         # 修改 dataset 配置，使其从 latent 缓存目录加载
         config.dataset.img_path = latent_cache_dir #  dataset 的 img_path 指向 latent 缓存目录
