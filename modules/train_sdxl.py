@@ -47,7 +47,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         config.dataset.load_latent = True #  告知 dataset 加载 latent 而不是图像
         config.dataset.pop("load_directory", None) # 移除 load_directory 配置，如果存在
         config.dataset.pop("load_tar", None) # 移除 load_tar 配置，如果存在
-        config.dataset.store_cls = "data.image_storage.LatentDataset"
+        config.dataset.store_cls = "data.image_storage.LatentStore"
 
 
     model = SupervisedFineTune(
