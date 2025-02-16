@@ -299,7 +299,6 @@ class TarDataset(Dataset):
                                         "midjourney_style_summary", "deviantart_commission_request", "brief_summary", "rating", "aes_rating"]
                             self.image_metadatas[sha256]["extra"] = {k: global_meta_entry.get(k, "") for k in extra_keys} # 提取 extra 信息
                         else:
-                            self.train_use = False
                             self.image_metadatas[sha256]["caption"] = "" # 默认 caption 为空
                             self.image_metadatas[sha256]["extra"] = {} # 默认 extra 为空
 
@@ -535,7 +534,7 @@ if __name__ == "__main__":
 
             h, w = original_size
             dataset_mapping[sha1] = {
-                "train_use": train_use,
+                "train_use": True if prompt else False,
                 "train_caption": prompt,
                 "file_path": str(basepath),
                 "train_width": w,
