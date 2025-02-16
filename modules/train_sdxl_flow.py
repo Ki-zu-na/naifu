@@ -37,7 +37,8 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
-            "-nu", "-ut" if use_tar else ""
+            "-nu", "-ut" if use_tar else "",
+            "-n", 12
         ]
         logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
         logger.info(f"执行命令: {' '.join(command)}")
