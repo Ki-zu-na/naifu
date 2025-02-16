@@ -53,15 +53,19 @@ def load_entry(p: Path, tar_file_handle=None, tar_file_offset=None, tar_file_siz
         # 从文件路径读取图像
         _img = Image.open(p)
 
-    if _img.mode == "RGB":
-        img = np.array(_img)
-    elif _img.mode == "RGBA":
-        baimg = Image.new('RGB', _img.size, (255, 255, 255))
-        baimg.paste(_img, (0, 0), _img)
-        img = np.array(baimg)
-    else:
-        img = np.array(_img.convert("RGB"))
-    return img
+    try: #  添加 try-except 块来捕获 numpy 转换错误
+        if _img.mode == "RGB":
+            img = np.array(_img)
+        elif _img.mode == "RGBA":
+            baimg = Image.new('RGB', _img.size, (255, 255, 255))
+            baimg.paste(_img, (0, 0), _img)
+            img = np.array(baimg)
+        else:
+            img = np.array(_img.convert("RGB"))
+        return img
+    except Exception as e: #  捕获 numpy 转换可能出现的异常
+        print(f"\033[31mError converting image to numpy array: {p} - {e}\033[0m") #  打印错误信息，包括路径和异常
+        return None #  返回 None 表示加载失败
 
 def get_sha1(path: Path):
     with open(path, "rb") as f:
@@ -149,6 +153,12 @@ class LatentEncodingDataset(Dataset):
                         print(f"\033[33mWarning: Invalid meta JSON format in {meta_path} for {tar_path}. 'files' key is missing or empty.\033[0m")
                         continue
 
+                    try: #  添加 try-except 块来处理 tarfile.open 异常
+                        self.tar_file_handles[tar_path] = tarfile.open(tar_path, 'r') # 在初始化时打开 tar 文件
+                    except tarfile.TarError as e:
+                        print(f"\033[31mError opening tar file {tar_path}: {e}\033[0m")
+                        continue #  如果 tar 文件打开失败，则跳过
+
                     for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
                         if is_img(Path(filename_in_tar)): # 仅处理图像文件
                             self.paths.append(filename_in_tar) #  存储 tar 内的文件名
@@ -182,25 +192,23 @@ class LatentEncodingDataset(Dataset):
                     print(f"\033[33mWarning: Invalid meta JSON format in {meta_path} for {tar_path}. 'files' key is missing or empty.\033[0m")
                     continue
 
+                try: #  添加 try-except 块来处理 tarfile.open 异常
+                    self.tar_file_handles[tar_path] = tarfile.open(tar_path, 'r') # 在初始化时打开 tar 文件
+                except tarfile.TarError as e:
+                    print(f"\033[31mError opening tar file {tar_path}: {e}\033[0m")
+                    continue #  如果 tar 文件打开失败，则跳过
+
+
                 for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
                     if is_img(Path(filename_in_tar)): # 仅处理图像文件
                         self.paths.append(filename_in_tar) #  存储 tar 内的文件名
                         self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
                         index_counter += 1
-            if self.is_tar_input:
-                self.tar_file_handle = tarfile.open(self.root, 'r') # 打开 tar 文件
         else:
             raise ValueError(f"Unsupported input root: {root}. Must be a directory or a .tar file.")
 
         print(f"Input root: {self.root}") # 打印输入的根路径
         print(f"Is tar input: {self.is_tar_input}") # 打印是否为 tar 文件输入
-        if self.is_tar_input:
-            print(f"Tar file metas keys: {self.tar_file_metas.keys()}") # 打印 tar 元数据文件的键
-            print(f"Tar index map: {self.tar_index_map}") # 打印 tar 索引映射
-        else:
-            print(f"Paths found before filtering: {len(self.paths)}") # 打印过滤前的路径数量
-            # 打印前 10 个路径，如果路径太多，全部打印会刷屏
-            print(f"First 10 paths: {self.paths[:10]}") if len(self.paths) > 0 else print("No paths found before filtering.")
 
         self.dtype = dtype
         self.raw_res = []
@@ -217,7 +225,11 @@ class LatentEncodingDataset(Dataset):
                     tar_path, filename_in_tar, offset, size = self.tar_index_map[p_index]
                     img = load_entry(Path(filename_in_tar), self.tar_file_handles[tar_path], offset, size) # 使用 load_entry 函数处理 tar 文件
                 else:
-                    img = load_entry(self.root / self.paths[p_index]) #  路径需要拼接 root
+                    img = load_entry(self.root / self.paths[p_index])
+                    if img is None: #  检查 load_entry 是否返回 None
+                        print(f"\033[33mSkipped: error processing {self.paths[p_index]}: failed to load image data\033[0m")
+                        remove_paths.append(p_index)
+                        continue #  如果图像加载失败，跳过当前图像
                 h, w = Image.fromarray(img).size #  使用 Image.fromarray 获取 PIL Image 对象
                 self.raw_res.append((h, w))
             except Exception as e:
@@ -237,7 +249,13 @@ class LatentEncodingDataset(Dataset):
             self.tar_index_map = new_tar_index_map # 更新 tar_index_map
         self.length = len(self.raw_res)
         print(f"Loaded {self.length} image sizes")
-        
+
+        # 在 __init__ 方法结束时关闭所有打开的 tar 文件句柄
+        for tar_file_handle in self.tar_file_handles.values():
+            tar_file_handle.close()
+        self.tar_file_handles = {} # 清空句柄字典
+
+
         self.fit_bucket_func = self.fit_bucket
         if no_upscale:
             self.fit_bucket_func = self.fit_bucket_no_upscale
@@ -359,15 +377,18 @@ class LatentEncodingDataset(Dataset):
                 img = load_entry(Path(filename_in_tar), tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
                 image_path_str = filename_in_tar #  tar 文件中使用文件名作为 key
                 full_image_path = Path(tar_path) / filename_in_tar #  为了 extras 里的 path 信息，需要构造一个路径，但实际上并不存在于文件系统
+                sha1 = hashlib.sha1(image_data).hexdigest() # 对图像数据计算 sha1
             else:
                 img = load_entry(self.root / self.paths[index])
+                if img is None: #  检查 load_entry 是否返回 None
+                    return None #  如果图像加载失败，__getitem__ 也返回 None
                 image_path_str = str(self.paths[index]) #  目录输入使用相对路径
                 full_image_path = self.root / self.paths[index] #  完整的路径
+                sha1 = get_sha1(full_image_path) #  sha1 计算使用构造的完整路径
 
             original_size = img.shape[:2]
             img, dhdw = self.fit_bucket_func(index, img)
             img = self.tr(img).to(self.dtype)
-            sha1 = get_sha1(full_image_path) #  sha1 计算使用构造的完整路径
 
             # 从 prompt_data 中获取 prompt 和 extra 信息
             if image_path_str in self.prompt_data:
@@ -398,16 +419,16 @@ class LatentEncodingDataset(Dataset):
 
 
 def get_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Preprocess images and encode latents, supports directory or tar file input.") #  更详细的描述
     parser.add_argument(
-        "--input", "-i", type=str, required=True, help="root directory or tar file of images" #  修改 help 描述
+        "--input", "-i", type=str, required=True, help="Root directory or tar file of images." #  修改 help 描述
     )
-    parser.add_argument("--output", "-o", type=str, required=True, help="output file")
-    parser.add_argument("--no-upscale", "-nu", action="store_true", help="do not upscale images")
-    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="data type")
-    parser.add_argument("--num_workers", "-n", type=int, default=6, help="number of dataloader workers")
-    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="path to metadata json file")
-    parser.add_argument("--use_tar", "-ut", action="store_true", help="use tar files in the input directory") #  新增 use_tar 选项
+    parser.add_argument("--output", "-o", type=str, required=True, help="Output directory to save cache files and dataset.json") #  更清晰的描述 output
+    parser.add_argument("--no-upscale", "-nu", action="store_true", help="Do not upscale images during resizing.") #  更清晰的 help
+    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="Data type for latents (float32 or bfloat16).") #  更清晰的 help 和可选值
+    parser.add_argument("--num_workers", "-n", type=int, default=6, help="Number of dataloader workers.") #  更清晰的 help
+    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="Path to metadata json file (optional).") #  更清晰的 help 和 optional
+    parser.add_argument("--use_tar", "-ut", action="store_true", help="Enable tar file processing. If input is a directory and this flag is set, will search for and process .tar files within the directory.") #  更详细的 use_tar help
     args = parser.parse_args()
     return args
 
@@ -447,44 +468,43 @@ if __name__ == "__main__":
 
     f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
 
-    with h5.File(h5_cache_file, "w", libver="latest") as f:
-        with torch.no_grad():
-            for entry in tqdm(dataloader):
-                if entry is None:
-                    continue
+    with torch.no_grad():
+        for entry in tqdm(dataloader):
+            if entry is None:
+                continue
 
-                sha1 = entry.extras['sha1']
-                w, h = entry.extras['original_size']
-                
-                dataset_mapping[sha1] = {
-                    "train_use": True,
-                    "train_caption": entry.extras['tag_string_general'],
-                    "file_path": entry.extras['path'],
-                    "train_width": w,
-                    "train_height": h,
-                    "extra": entry.extras
-                }
-                
-                if f"{sha1}.latents" in f:
-                    print(f"\033[33mWarning: {entry.extras['path']} is already cached. Skipping... \033[0m")
-                    continue
+            sha1 = entry.extras['sha1']
+            w, h = entry.extras['original_size']
+            
+            dataset_mapping[sha1] = {
+                "train_use": True,
+                "train_caption": entry.extras['tag_string_general'],
+                "file_path": entry.extras['path'],
+                "train_width": w,
+                "train_height": h,
+                "extra": entry.extras
+            }
+            
+            if f"{sha1}.latents" in f:
+                print(f"\033[33mWarning: {entry.extras['path']} is already cached. Skipping... \033[0m")
+                continue
 
-                img = entry.pixel.unsqueeze(0).cuda()
-                latent = vae.encode(img, return_dict=False)[0]
-                latent.deterministic = True
-                latent = latent.sample()[0]
-                d = f.create_dataset(
-                    f"{sha1}.latents",
-                    data=latent.float().cpu().numpy(),
-                    compression="gzip",
-                )
-                d.attrs["scale"] = False
-                d.attrs["dhdw"] = entry.extras['dhdw']
+            img = entry.pixel.unsqueeze(0).cuda()
+            latent = vae.encode(img, return_dict=False)[0]
+            latent.deterministic = True
+            latent = latent.sample()[0]
+            d = f.create_dataset(
+                f"{sha1}.latents",
+                data=latent.float().cpu().numpy(),
+                compression="gzip",
+            )
+            d.attrs["scale"] = False
+            d.attrs["dhdw"] = entry.extras['dhdw']
 
-                if f.id.get_filesize() > max_file_size:
-                    f.close()
-                    current_file_index += 1
-                    f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
+            if f.id.get_filesize() > max_file_size:
+                f.close()
+                current_file_index += 1
+                f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
 
     with open(opt / "dataset.json", "w") as f:
         json.dump(dataset_mapping, f, indent=4)
