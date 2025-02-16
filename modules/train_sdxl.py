@@ -47,6 +47,9 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             ]
             logger.info(f"开始多卡预缓存 Latent，缓存目录: {output_path}")
             logger.info(f"执行命令: {' '.join(cache_command)}")
+            env_without_distributed = os.environ.copy()
+            for var in ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"]:
+                env_without_distributed.pop(var, None)
             subprocess.run(cache_command, check=True)
         # 等待 rank0 完成缓存任务，再继续后续训练
         dist.barrier()
