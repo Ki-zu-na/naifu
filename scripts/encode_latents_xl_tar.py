@@ -291,7 +291,7 @@ class TarDataset(Dataset):
                         }
 
                         # 尝试从 global_metadata 中获取 caption 和 extra
-                        global_meta_entry = global_metadata.get(Path(filename).stem) # 使用文件名 (不带后缀) 查找
+                        global_meta_entry = global_metadata.get(Path(filename).name)
                         if global_meta_entry:
                             self.image_metadatas[sha256]["caption"] = global_meta_entry.get("tag_string_general", "") # 提取 caption
                             extra_keys = ["tag_string_general", "tag_string_character", "tag_string_copyright",
@@ -427,36 +427,30 @@ class TarDataset(Dataset):
         tar_info = self.image_metadatas[sha256]
         try:
             with tarfile.open(tar_info["tar_path"], 'r') as tar:
-                # 使用 tar_fileobj 根据 offset 和 size 读取数据
-                tar_fileobj = tar.fileobj
-                tar_fileobj.seek(tar_info["offset"])
-                image_data = tar_fileobj.read(tar_info["size"])
-                fileobj = io.BytesIO(image_data)
-                _img = Image.open(fileobj)
-
-                if _img.mode == "RGB":
-                    img = np.array(_img)
-                elif _img.mode == "RGBA":
-                    # 透明图像处理
-                    baimg = Image.new("RGB", _img.size, (255, 255, 255))
-                    baimg.paste(_img, (0, 0), _img)
-                    img = np.array(baimg)
-                else:
-                    img = np.array(_img.convert("RGB"))
-
-                original_size = img.shape[:2]
-                img, dhdw = self.fit_bucket_func(index, img)
-                img = self.tr(img).to(self.dtype)
-                prompt = tar_info.get("caption", "")
-                extra = tar_info.get("extra", {})
-                
-                # 统一计算 SHA1，与目录模式保持一致
-                new_sha1 = hashlib.sha1(image_data).hexdigest()
+                with tar.fileobj as tar_fileobj:
+                    tar_fileobj.seek(tar_info["offset"])
+                    image_data = tar_fileobj.read(tar_info["size"])
+                    fileobj = io.BytesIO(image_data)
+                    _img = Image.open(fileobj)
+                    if _img.mode == "RGB":
+                        img = np.array(_img)
+                    elif _img.mode == "RGBA":
+                        baimg = Image.new("RGB", _img.size, (255, 255, 255))
+                        baimg.paste(_img, (0, 0), _img)
+                        img = np.array(baimg)
+                    else:
+                        img = np.array(_img.convert("RGB"))
+                    original_size = img.shape[:2]
+                    img, dhdw = self.fit_bucket_func(index, img)
+                    img = self.tr(img).to(self.dtype)
+                    prompt = tar_info.get("caption", "")
+                    extra = tar_info.get("extra", {})
+                    new_sha1 = hashlib.sha1(image_data).hexdigest()
         except Exception as e:
             print(f"\033[31mError processing {tar_info['filename']} from {tar_info['tar_path']}: {e}\033[0m")
             return None, str(tar_info["tar_path"]), None, None, None, None, None
 
-        return img, str(tar_info["tar_path"]), prompt, new_sha1, original_size, dhdw, extra
+        return img, f"{tar_info['tar_path']}@{tar_info['filename']}", prompt, new_sha1, original_size, dhdw, extra
 
 
     def __len__(self):
