@@ -15,10 +15,11 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 import subprocess
 import torch.distributed as dist
 from common.distributed_cache import distributed_cache_tars, process_function
+from pathlib import Path
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
-    # 新增代码：检查是否需要预先缓存 latent
+
     # 新增代码：检查是否需要预先缓存 latent
     if config.advanced.get("cache_latents_before_train", False):
         latent_cache_dir = config.advanced.get("latent_cache_dir", "latent_cache")
@@ -30,9 +31,8 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         use_tar = config.dataset.get("load_tar", False)
 
         if use_tar:
-            from pathlib import Path
             tar_dir_path = Path(tar_dirs)
-            tar_files = sorted([str(p) for p in tar_dir_path.glob("*.tar")])
+            tar_files = sorted([str(p) for p in tar_dir_path.rglob("*.tar")])
         else:
             tar_files = []
 
