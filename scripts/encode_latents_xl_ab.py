@@ -430,7 +430,7 @@ if __name__ == "__main__":
 
     f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
 
-    with h5.File(h5_cache_file, "W", libver="latest") as f:
+    with h5.File(h5_cache_file, "w", libver="latest") as f:
         with torch.no_grad():
             for entry in tqdm(dataloader):
                 if entry is None:
