@@ -479,8 +479,9 @@ if __name__ == "__main__":
     num_workers = args.num_workers
     use_tar = args.use_tar
     metadata_json_path = args.metadata_json_path
-
-    vae = AutoencoderKL.from_pretrained(args.model, subfolder=args.subfolder).to(dtype)
+    
+    vae_path = "stabilityai/sdxl-vae"
+    vae = AutoencoderKL.from_pretrained(vae_path).to(dtype=dtype)
     vae.requires_grad_(False)
     vae.eval().cuda()
 
