@@ -181,8 +181,16 @@ class LatentEncodingDataset(Dataset):
         else:
             raise ValueError(f"Unsupported input root: {root}. Must be a directory or a .tar file.")
 
+        print(f"Input root: {self.root}") # 打印输入的根路径
+        print(f"Is tar input: {self.is_tar_input}") # 打印是否为 tar 文件输入
+        if self.is_tar_input:
+            print(f"Tar file metas keys: {self.tar_file_metas.keys()}") # 打印 tar 元数据文件的键
+            print(f"Tar index map: {self.tar_index_map}") # 打印 tar 索引映射
+        else:
+            print(f"Paths found before filtering: {len(self.paths)}") # 打印过滤前的路径数量
+            # 打印前 10 个路径，如果路径太多，全部打印会刷屏
+            print(f"First 10 paths: {self.paths[:10]}") if len(self.paths) > 0 else print("No paths found before filtering.")
 
-        print(f"Found {len(self.paths)} images")
         self.dtype = dtype
         self.raw_res = []
 
