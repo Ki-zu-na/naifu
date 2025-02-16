@@ -501,10 +501,10 @@ if __name__ == "__main__":
     h5_datasets_count = 0 # 当前 h5 文件中的数据集数量
     max_h5_size = 40 * 1024 * 1024 * 1024 # 40GB 最大 h5 文件大小
 
-    def _create_new_h5_file(): # 创建新 h5 文件的辅助函数
-        nonlocal h5_file_count, current_h5_file, h5_datasets_count
+    def _create_new_h5_file():  # 创建新 h5 文件的辅助函数
+        global h5_file_count, current_h5_file, h5_datasets_count
         if current_h5_file:
-            current_h5_file.close() # 关闭旧文件
+            current_h5_file.close()  # 关闭旧文件
         h5_file_count += 1
         cache_filename = f"cache_{h5_file_count}.h5" # 使用计数器命名 h5 文件
         h5_cache_file = opt / cache_filename
