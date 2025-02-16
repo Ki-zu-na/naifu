@@ -102,7 +102,7 @@ class LatentEncodingDataset(Dataset):
         self.tar_file_metas = {} # 用于存储 tar 文件元数据
         self.tar_index_map = {} # 索引到 (tar_path, filename_in_tar) 的映射
         self.is_tar_input = False # 标志是否为 tar 文件输入
-        self.tar_file_handle = None # 用于存储打开的 tar 文件句柄
+        self.tar_file_handles = {} #  使用字典存储打开的 tar 文件句柄，键为 tar 文件路径
         self.use_tar = use_tar #  保存 use_tar 参数
 
         if self.metadata_json_path:
@@ -142,13 +142,17 @@ class LatentEncodingDataset(Dataset):
                         print(f"\033[33mWarning: Invalid meta JSON format in {meta_path} for {tar_path}. 'files' key is missing or empty.\033[0m")
                         continue
 
+                    try: #  添加 try-except 块来处理 tarfile.open 异常
+                        self.tar_file_handles[tar_path] = tarfile.open(tar_path, 'r') # 在初始化时打开 tar 文件
+                    except tarfile.TarError as e:
+                        print(f"\033[31mError opening tar file {tar_path}: {e}\033[0m")
+                        continue #  如果 tar 文件打开失败，则跳过
+
                     for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
                         if is_img(Path(filename_in_tar)): # 仅处理图像文件
                             self.paths.append(filename_in_tar) #  存储 tar 内的文件名
                             self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
                             index_counter += 1
-                if self.is_tar_input and self.tar_paths: #  只有当找到 tar 文件时才打开
-                    pass #  不再在 __init__ 中打开 tar 文件，而是在需要时打开
             else: #  如果 use_tar 为 False，则查找目录下的图片
                 self.is_tar_input = False
                 for artist_folder in self.root.iterdir():
@@ -174,13 +178,18 @@ class LatentEncodingDataset(Dataset):
                     print(f"\033[33mWarning: Invalid meta JSON format in {meta_path} for {tar_path}. 'files' key is missing or empty.\033[0m")
                     continue
 
+                try: #  添加 try-except 块来处理 tarfile.open 异常
+                    self.tar_file_handles[tar_path] = tarfile.open(tar_path, 'r') # 在初始化时打开 tar 文件
+                except tarfile.TarError as e:
+                    print(f"\033[31mError opening tar file {tar_path}: {e}\033[0m")
+                    continue #  如果 tar 文件打开失败，则跳过
+
+
                 for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
                     if is_img(Path(filename_in_tar)): # 仅处理图像文件
                         self.paths.append(filename_in_tar) #  存储 tar 内的文件名
                         self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
                         index_counter += 1
-            if self.is_tar_input:
-                pass #  不再在 __init__ 中打开 tar 文件，而是在需要时打开
         else:
             raise ValueError(f"Unsupported input root: {root}. Must be a directory or a .tar file.")
 
@@ -200,8 +209,8 @@ class LatentEncodingDataset(Dataset):
             try:
                 if self.is_tar_input:
                     tar_path, filename_in_tar, offset, size = self.tar_index_map[p_index]
-                    with tarfile.open(tar_path, 'r') as tar_file_handle:
-                        img = self._load_entry_from_tar(tar_file_handle, offset, size) # 使用修改后的 _load_entry_from_tar 函数
+                    tar_file_handle = self.tar_file_handles[tar_path] # 从预先打开的句柄字典中获取
+                    img = self._load_entry_from_tar(tar_file_handle, offset, size) # 使用修改后的 _load_entry_from_tar 函数
                 else:
                     img = load_entry(self.root / self.paths[p_index])
                 h, w = Image.fromarray(img).size #  使用 Image.fromarray 获取 PIL Image 对象
@@ -223,7 +232,13 @@ class LatentEncodingDataset(Dataset):
             self.tar_index_map = new_tar_index_map # 更新 tar_index_map
         self.length = len(self.raw_res)
         print(f"Loaded {self.length} image sizes")
-        
+
+        # 在 __init__ 方法结束时关闭所有打开的 tar 文件句柄
+        for tar_file_handle in self.tar_file_handles.values():
+            tar_file_handle.close()
+        self.tar_file_handles = {} # 清空句柄字典
+
+
         self.fit_bucket_func = self.fit_bucket
         if no_upscale:
             self.fit_bucket_func = self.fit_bucket_no_upscale
@@ -328,28 +343,36 @@ class LatentEncodingDataset(Dataset):
         return img, (dh, dw)
 
     def _load_entry_from_tar(self, tar_file_handle, offset, size):
-        tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
-        tar_file_obj.seek(offset)  # 定位到偏移量
-        image_data = tar_file_obj.read(size)  # 读取指定大小的数据
-        fileobj = io.BytesIO(image_data)  # 使用 BytesIO 包装字节数据
-        _img = Image.open(fileobj)
-        if _img.mode == "RGB":
-            img = np.array(_img)
-        elif _img.mode == "RGBA":
-            baimg = Image.new('RGB', _img.size, (255, 255, 255))
-            baimg.paste(_img, (0, 0), _img)
-            img = np.array(baimg)
-        else:
-            img = np.array(_img.convert("RGB"))
-        return img, image_data # 同时返回图像数据 bytes
+        try: # 添加 try-except 块
+            tar_file_obj = tar_file_handle.fileobj  # 获取底层文件对象
+            tar_file_obj.seek(offset)  # 定位到偏移量
+            image_data = tar_file_obj.read(size)  # 读取指定大小的数据
+            fileobj = io.BytesIO(image_data)  # 使用 BytesIO 包装字节数据
+            _img = Image.open(fileobj)
+            if _img.mode == "RGB":
+                img = np.array(_img)
+            elif _img.mode == "RGBA":
+                baimg = Image.new('RGB', _img.size, (255, 255, 255))
+                baimg.paste(_img, (0, 0), _img)
+                img = np.array(baimg)
+            else:
+                img = np.array(_img.convert("RGB"))
+            return img, image_data # 同时返回图像数据 bytes
+        except Exception as e:
+            print(f"\033[31mError loading image from tar file (offset={offset}, size={size}): {e}\033[0m")
+            return None, None #  返回 None, None 表示加载失败
+
 
     # 在 __getitem__ 方法中修改返回值
     def __getitem__(self, index) -> Entry:
         try:
             if self.is_tar_input:
                 tar_path, filename_in_tar, offset, size = self.tar_index_map[index]
-                with tarfile.open(tar_path, 'r') as tar_file_handle:
-                    img, image_data = self._load_entry_from_tar(tar_file_handle, offset, size) # 获取图像数据 bytes
+                tar_file_handle = self.tar_file_handles[tar_path] # 获取预先打开的句柄
+                img, image_data = self._load_entry_from_tar(tar_file_handle, offset, size) # 获取图像数据 bytes
+                if img is None: #  检查 _load_entry_from_tar 是否返回 None
+                    return None #  如果图像加载失败，__getitem__ 也返回 None
+
                 image_path_str = filename_in_tar #  tar 文件中使用文件名作为 key
                 full_image_path = Path(tar_path) / filename_in_tar #  为了 extras 里的 path 信息，需要构造一个路径，但实际上并不存在于文件系统
                 sha1 = hashlib.sha1(image_data).hexdigest() # 对图像数据计算 sha1
@@ -392,16 +415,16 @@ class LatentEncodingDataset(Dataset):
 
 
 def get_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Preprocess images and encode latents, supports directory or tar file input.") #  更详细的描述
     parser.add_argument(
-        "--input", "-i", type=str, required=True, help="root directory or tar file of images" #  修改 help 描述
+        "--input", "-i", type=str, required=True, help="Root directory or tar file of images." #  修改 help 描述
     )
-    parser.add_argument("--output", "-o", type=str, required=True, help="output file")
-    parser.add_argument("--no-upscale", "-nu", action="store_true", help="do not upscale images")
-    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="data type")
-    parser.add_argument("--num_workers", "-n", type=int, default=6, help="number of dataloader workers")
-    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="path to metadata json file")
-    parser.add_argument("--use_tar", "-ut", action="store_true", help="use tar files in the input directory") #  新增 use_tar 选项
+    parser.add_argument("--output", "-o", type=str, required=True, help="Output directory to save cache files and dataset.json") #  更清晰的描述 output
+    parser.add_argument("--no-upscale", "-nu", action="store_true", help="Do not upscale images during resizing.") #  更清晰的 help
+    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="Data type for latents (float32 or bfloat16).") #  更清晰的 help 和可选值
+    parser.add_argument("--num_workers", "-n", type=int, default=6, help="Number of dataloader workers.") #  更清晰的 help
+    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="Path to metadata json file (optional).") #  更清晰的 help 和 optional
+    parser.add_argument("--use_tar", "-ut", action="store_true", help="Enable tar file processing. If input is a directory and this flag is set, will search for and process .tar files within the directory.") #  更详细的 use_tar help
     args = parser.parse_args()
     return args
 
