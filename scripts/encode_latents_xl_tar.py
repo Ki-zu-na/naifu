@@ -666,4 +666,5 @@ if __name__ == "__main__":
                         os.remove(rank_h5_file)
             print("Rank 0: Rank-specific cache files and dataset JSONs cleaned up.") #  显示 Rank 信息
         print("Rank 0: Cache merging complete.") #  显示 Rank 信息
-    dist.destroy_process_group() #  清理分布式环境
+    if dist.is_initialized(): #  检查分布式环境是否初始化
+        dist.destroy_process_group() #  清理分布式环境
