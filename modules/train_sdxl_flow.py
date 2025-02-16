@@ -22,7 +22,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         metadata_path = config.dataset.get("metadata_json", "metadata.json")
         if not img_path:
             raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
-
+        use_tar = config.dataset.get("load_tar", False)
         # 构建 encode_latents_xl_ab.py 脚本的命令行参数
         encode_script_path = "scripts/encode_latents_xl_ab.py" # 假设脚本路径
         output_path = latent_cache_dir
@@ -33,7 +33,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
-            "-nu" 
+            "-nu", "-ut" if use_tar else ""
         ]
         logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
         logger.info(f"执行命令: {' '.join(command)}")
@@ -48,6 +48,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         config.dataset.load_latent = True #  告知 dataset 加载 latent 而不是图像
         config.dataset.pop("load_directory", None) # 移除 load_directory 配置，如果存在
         config.dataset.pop("load_tar", None) # 移除 load_tar 配置，如果存在
+
 
     model = SupervisedFineTune(
         model_path=model_path, 
