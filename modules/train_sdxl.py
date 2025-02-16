@@ -9,9 +9,6 @@ from common.logging import logger
 from modules.sdxl_model import StableDiffusionModel
 from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
-import subprocess
-import torch.distributed as dist
-from common.distributed_cache import distributed_cache_tars, process_function
 from pathlib import Path
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
@@ -26,30 +23,19 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         if not img_path:
             raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
         use_tar = config.dataset.get("load_tar", False)
-        # 构建 encode_latents_xl_tar.py 脚本的命令行参数
+        # 构建 encode_latents_xl_ab.py 脚本的命令行参数
         encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
         output_path = latent_cache_dir
-        command_base = [
+        command = [
             "python",
             encode_script_path,
             "-i", tar_dirs if use_tar else img_path,
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
-            "-nu",
+            "-nu", "-ut" if use_tar else ""
         ]
-        if use_tar:
-            command_base.append("-ut")
-
-        num_gpus = torch.cuda.device_count()
-        if num_gpus > 1:
-            # 使用 torchrun 启动多 GPU 脚本
-            command = ["torchrun", f"--nproc_per_node={num_gpus}"] + command_base
-            logger.info(f"使用 {num_gpus} GPUs 预缓存 Latent，缓存目录: {latent_cache_dir}")
-        else:
-            command = command_base #  单 GPU 或 CPU
-            logger.info(f"使用单 GPU 预缓存 Latent，缓存目录: {latent_cache_dir}")
-
+        logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
         logger.info(f"执行命令: {' '.join(command)}")
 
         # 执行脚本 (你需要确保你的环境可以执行这个命令)
