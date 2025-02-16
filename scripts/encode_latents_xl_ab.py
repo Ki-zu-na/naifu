@@ -187,13 +187,6 @@ class LatentEncodingDataset(Dataset):
 
         print(f"Input root: {self.root}") # 打印输入的根路径
         print(f"Is tar input: {self.is_tar_input}") # 打印是否为 tar 文件输入
-        if self.is_tar_input:
-            print(f"Tar file metas keys: {self.tar_file_metas.keys()}") # 打印 tar 元数据文件的键
-            print(f"Tar index map: {self.tar_index_map}") # 打印 tar 索引映射
-        else:
-            print(f"Paths found before filtering: {len(self.paths)}") # 打印过滤前的路径数量
-            # 打印前 10 个路径，如果路径太多，全部打印会刷屏
-            print(f"First 10 paths: {self.paths[:10]}") if len(self.paths) > 0 else print("No paths found before filtering.")
 
         self.dtype = dtype
         self.raw_res = []
@@ -430,45 +423,43 @@ if __name__ == "__main__":
 
     f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
 
-    with h5.File(h5_cache_file, "w", libver="latest") as f:
-        with torch.no_grad():
-            for entry in tqdm(dataloader):
-                if entry is None:
-                    continue
+    with torch.no_grad():
+        for entry in tqdm(dataloader):
+            if entry is None:
+                continue
 
-                sha1 = entry.extras['sha1']
-                w, h = entry.extras['original_size']
-                
-                dataset_mapping[sha1] = {
-                    "train_use": True,
-                    "train_caption": entry.extras['tag_string_general'],
-                    "file_path": entry.extras['path'],
-                    "train_width": w,
-                    "train_height": h,
-                    "extra": entry.extras
-                }
-                
-                if f"{sha1}.latents" in f:
-                    print(f"\033[33mWarning: {entry.extras['path']} is already cached. Skipping... \033[0m")
-                    continue
+            sha1 = entry.extras['sha1']
+            w, h = entry.extras['original_size']
+            
+            dataset_mapping[sha1] = {
+                "train_use": True,
+                "train_caption": entry.extras['tag_string_general'],
+                "file_path": entry.extras['path'],
+                "train_width": w,
+                "train_height": h,
+                "extra": entry.extras
+            }
+            
+            if f"{sha1}.latents" in f:
+                print(f"\033[33mWarning: {entry.extras['path']} is already cached. Skipping... \033[0m")
+                continue
 
-                img = entry.pixel.unsqueeze(0).cuda()
-                latent = vae.encode(img, return_dict=False)[0]
-                latent.deterministic = True
-                latent = latent.sample()[0]
-                d = f.create_dataset(
-                    f"{sha1}.latents",
-                    data=latent.float().cpu().numpy(),
-                    compression="gzip",
-                )
-                d.attrs["scale"] = False
-                d.attrs["dhdw"] = entry.extras['dhdw']
+            img = entry.pixel.unsqueeze(0).cuda()
+            latent = vae.encode(img, return_dict=False)[0]
+            latent.deterministic = True
+            latent = latent.sample()[0]
+            d = f.create_dataset(
+                f"{sha1}.latents",
+                data=latent.float().cpu().numpy(),
+                compression="gzip",
+            )
+            d.attrs["scale"] = False
+            d.attrs["dhdw"] = entry.extras['dhdw']
 
-                if f.id.get_filesize() > max_file_size:
-                    f.close()
-                    current_file_index += 1
-                    f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
-                    f = h5.File(h5_cache_file, "w", libver="latest")
+            if f.id.get_filesize() > max_file_size:
+                f.close()
+                current_file_index += 1
+                f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
 
     with open(opt / "dataset.json", "w") as f:
         json.dump(dataset_mapping, f, indent=4)
