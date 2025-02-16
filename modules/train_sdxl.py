@@ -10,6 +10,8 @@ from modules.sdxl_model import StableDiffusionModel
 from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
 from pathlib import Path
+import subprocess
+import torch.distributed as dist
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
@@ -27,23 +29,28 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
         output_path = latent_cache_dir
         cache_num = config.dataset.get("cache_num", 12)
-        command = [
-            "python",
-            encode_script_path,
-            "-i", tar_dirs if use_tar else img_path,
-            "-metadata", metadata_path,
-            "-o", output_path,
-            "-d", "bfloat16",
-            "-nu", 
-            "-n", str(cache_num),
-            "-ut" if use_tar else ""
-        ]
-        logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
-        logger.info(f"执行命令: {' '.join(command)}")
-        
-        import subprocess
-        subprocess.run(command, check=True)
-        logger.info(f"Latent 预缓存完成，缓存目录: {latent_cache_dir}")
+        if fabric.global_rank == 0:
+            # 指定用于缓存的 GPU 数量，从配置或硬编码中获得
+            num_gpus_to_use = config.advanced.get("cache_latents_num_gpus", 4)
+            cache_command = [
+                "torchrun",
+                "--standalone",
+                f"--nproc_per_node={num_gpus_to_use}",
+                encode_script_path,  # 缓存脚本路径
+                "-i", tar_dirs if use_tar else img_path,
+                "-metadata", metadata_path,
+                "-o", output_path,
+                "-d", "bfloat16",
+                "-nu",
+                "-n", str(cache_num),
+                "-ut" if use_tar else ""
+            ]
+            logger.info(f"开始多卡预缓存 Latent，缓存目录: {output_path}")
+            logger.info(f"执行命令: {' '.join(cache_command)}")
+            subprocess.run(cache_command, check=True)
+        # 等待 rank0 完成缓存任务，再继续后续训练
+        dist.barrier()
+        logger.info(f"Latent 预缓存完成，缓存目录: {output_path}")
 
         # 修改 dataset 配置，使其从 latent 缓存目录加载
         config.dataset.img_path = latent_cache_dir #  dataset 的 img_path 指向 latent 缓存目录

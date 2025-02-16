@@ -23,13 +23,7 @@ from typing import Callable, Generator, Optional
 
 import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
-
-def get_free_port():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+from common.utils import get_free_port
 
 def setup_distributed():
     if dist.is_initialized():
