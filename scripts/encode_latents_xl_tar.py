@@ -502,7 +502,7 @@ def get_args():
     parser.add_argument("--output", "-o", type=str, required=True, help="保存缓存文件和 dataset.json 的输出目录。") #  更清晰的描述 output (中文)
     parser.add_argument("--no-upscale", "-nu", action="store_true", help="调整大小期间不放大图像。") #  更清晰的 help (中文)
     parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="潜在表示的数据类型 (float32 或 bfloat16)。") #  更清晰的 help 和可选值 (中文)
-    parser.add_argument("--num_workers", "-n", type=int, default=6, help="数据加载器 worker 数量。") #  更清晰的 help (中文)
+    parser.add_argument("--num_workers", "-n", type=int, default=12, help="数据加载器 worker 数量。") #  更清晰的 help (中文)
     parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="存储包含图片 prompt 和 extra 信息的 JSON 文件路径。") #  用于存储包含图片prompt和extra的的json
     parser.add_argument("--use_tar", "-ut", action="store_true", help="启用 tar 文件处理。如果输入是目录并且设置了此标志，则将在目录中搜索并处理 .tar 文件。") #  更详细的 use_tar help (中文)
     args = parser.parse_args()
