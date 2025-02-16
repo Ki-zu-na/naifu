@@ -250,6 +250,8 @@ class TarDataset(Dataset):
     def _load_metadata(self):
         """加载所有 tar 文件的元数据和指定的 metadata json 文件，并筛选文件名拓展名匹配全局 meta 的图像"""
         global_metadata = {}
+        skipped_count = 0  # 添加计数器
+        
         if self.metadata_json_path.exists():  # 加载全局 meta json
             print(f"Loading global metadata from {self.metadata_json_path}")
             with open(self.metadata_json_path, 'r') as f:
@@ -275,10 +277,10 @@ class TarDataset(Dataset):
                     if not is_img(Path(filename)):
                         continue
 
-                    # 新增：检查全局 meta json 中是否存在该文件名（使用文件名包含扩展名的形式）
+                    # 检查全局 meta json 中是否存在该文件名
                     filename_key = Path(filename).name
                     if global_metadata and filename_key not in global_metadata:
-                        print(f"\033[33mSkipping {filename} as it does not exist in global meta json.\033[0m")
+                        skipped_count += 1  # 增加计数
                         continue
 
                     sha256 = file_info.get("sha256")
@@ -321,6 +323,9 @@ class TarDataset(Dataset):
                 print(f"\033[31mKeyError: {e} in {json_path}. Skipping tar file.\033[0m")
             except Exception as e:
                 print(f"\033[31mError processing tar metadata {json_path}: {e}. Skipping tar file.\033[0m")
+
+        if skipped_count > 0:  # 在处理完所有文件后输出统计信息
+            print(f"\033[33mSkipped {skipped_count} files that do not exist in global meta json.\033[0m")
 
 
     def generate_buckets(self):
