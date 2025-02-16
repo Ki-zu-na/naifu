@@ -102,7 +102,7 @@ class LatentEncodingDataset(Dataset):
         self.tar_file_metas = {} # 用于存储 tar 文件元数据
         self.tar_index_map = {} # 索引到 (tar_path, filename_in_tar) 的映射
         self.is_tar_input = False # 标志是否为 tar 文件输入
-        self.tar_file_handle = None # 用于存储打开的 tar 文件句柄
+        self.tar_file_handles = {} #  存储 tar 文件句柄的字典
         self.use_tar = use_tar #  保存 use_tar 参数
 
         if self.metadata_json_path:
@@ -126,7 +126,14 @@ class LatentEncodingDataset(Dataset):
                 for tar_path in dirwalk(self.root):
                     if tar_path.suffix == '.tar':
                         self.tar_paths.append(tar_path)
-                for tar_path in self.tar_paths:
+                self.tar_file_handles = {} #  存储 tar 文件句柄的字典
+                for tar_path in self.tar_paths: # 遍历所有 tar 文件路径
+                    try:
+                        self.tar_file_handles[tar_path] = tarfile.open(str(tar_path), 'r') # 打开每个 tar 文件并存储句柄
+                    except Exception as e:
+                        print(f"\033[31mError opening tar file {tar_path}: {e}\033[0m")
+                        continue # 如果打开失败，则跳过此 tar 文件
+
                     meta_path = tar_path.with_suffix(".json") # 假设同名 json 文件
                     try:
                         with open(meta_path, 'r') as f:
@@ -147,9 +154,9 @@ class LatentEncodingDataset(Dataset):
                             self.paths.append(filename_in_tar) #  存储 tar 内的文件名
                             self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
                             index_counter += 1
-                if self.is_tar_input and self.tar_paths: #  只有当找到 tar 文件时才打开
-                    #  这里假设只处理一个 tar 文件，如果需要处理多个 tar 文件，可能需要修改 tar_file_handle 的管理方式
-                    self.tar_file_handle = tarfile.open(str(self.tar_paths[0]), 'r') # 打开 第一个 tar 文件，如果存在多个 tar 文件，这里需要修改
+                #  不再在这里打开第一个 tar 文件，而是在循环中打开所有 tar 文件
+                # if self.is_tar_input and self.tar_paths:
+                #     self.tar_file_handle = tarfile.open(str(self.tar_paths[0]), 'r') # 打开 第一个 tar 文件，如果存在多个 tar 文件，这里需要修改
             else: #  如果 use_tar 为 False，则查找目录下的图片
                 self.is_tar_input = False
                 for artist_folder in self.root.iterdir():
@@ -208,7 +215,7 @@ class LatentEncodingDataset(Dataset):
             try:
                 if self.is_tar_input:
                     tar_path, filename_in_tar, offset, size = self.tar_index_map[p_index]
-                    img = load_entry(Path(filename_in_tar), self.tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
+                    img = load_entry(Path(filename_in_tar), self.tar_file_handles[tar_path], offset, size) # 使用 load_entry 函数处理 tar 文件
                 else:
                     img = load_entry(self.root / self.paths[p_index]) #  路径需要拼接 root
                 h, w = Image.fromarray(img).size #  使用 Image.fromarray 获取 PIL Image 对象
@@ -334,12 +341,22 @@ class LatentEncodingDataset(Dataset):
         img = img[dh : dh + target_h, dw : dw + target_w]
         return img, (dh, dw)
 
+    def __del__(self):
+        if self.tar_file_handle:
+            self.tar_file_handle.close()
+
+    def close_tar_file(self):
+        if self.tar_file_handle:
+            self.tar_file_handle.close()
+            self.tar_file_handle = None
+
     # 在 __getitem__ 方法中修改返回值
     def __getitem__(self, index) -> Entry:
         try:
             if self.is_tar_input:
                 tar_path, filename_in_tar, offset, size = self.tar_index_map[index]
-                img = load_entry(Path(filename_in_tar), self.tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
+                tar_file_handle = self.tar_file_handles[tar_path] #  根据 tar_path 获取对应的 tar 文件句柄
+                img = load_entry(Path(filename_in_tar), tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
                 image_path_str = filename_in_tar #  tar 文件中使用文件名作为 key
                 full_image_path = Path(tar_path) / filename_in_tar #  为了 extras 里的 path 信息，需要构造一个路径，但实际上并不存在于文件系统
             else:
