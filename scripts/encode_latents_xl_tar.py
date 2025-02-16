@@ -518,7 +518,6 @@ if __name__ == "__main__":
     num_workers = args.num_workers
     metadata_json_path = args.metadata_json_path
     use_tar = args.use_tar
-    merge_cache = args.merge_cache
 
     vae_path = "stabilityai/sdxl-vae"
     vae = AutoencoderKL.from_pretrained(vae_path).to(dtype=dtype)
