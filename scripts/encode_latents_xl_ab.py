@@ -120,8 +120,12 @@ class LatentEncodingDataset(Dataset):
         if self.root.is_dir():
             if self.use_tar: #  如果 use_tar 为 True，则查找 tar 文件
                 self.is_tar_input = True #  设置为 tar 输入模式
-                self.tar_paths = [p for p in self.root.iterdir() if p.suffix == '.tar'] #  查找目录下的 tar 文件
+                self.tar_paths = [] #  修改：初始化为空列表，用于存储找到的 tar 文件路径
                 index_counter = 0
+                # 修改：使用 dirwalk 递归查找所有 tar 文件
+                for tar_path in dirwalk(self.root):
+                    if tar_path.suffix == '.tar':
+                        self.tar_paths.append(tar_path)
                 for tar_path in self.tar_paths:
                     meta_path = tar_path.with_suffix(".json") # 假设同名 json 文件
                     try:
