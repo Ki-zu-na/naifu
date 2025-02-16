@@ -341,7 +341,7 @@ class LatentEncodingDataset(Dataset):
             img = np.array(baimg)
         else:
             img = np.array(_img.convert("RGB"))
-        return img
+        return img, image_data # 同时返回图像数据 bytes
 
     # 在 __getitem__ 方法中修改返回值
     def __getitem__(self, index) -> Entry:
@@ -349,18 +349,19 @@ class LatentEncodingDataset(Dataset):
             if self.is_tar_input:
                 tar_path, filename_in_tar, offset, size = self.tar_index_map[index]
                 with tarfile.open(tar_path, 'r') as tar_file_handle:
-                    img = self._load_entry_from_tar(tar_file_handle, offset, size) # 使用修改后的 _load_entry_from_tar 函数
+                    img, image_data = self._load_entry_from_tar(tar_file_handle, offset, size) # 获取图像数据 bytes
                 image_path_str = filename_in_tar #  tar 文件中使用文件名作为 key
                 full_image_path = Path(tar_path) / filename_in_tar #  为了 extras 里的 path 信息，需要构造一个路径，但实际上并不存在于文件系统
+                sha1 = hashlib.sha1(image_data).hexdigest() # 对图像数据计算 sha1
             else:
                 img = load_entry(self.root / self.paths[index])
                 image_path_str = str(self.paths[index]) #  目录输入使用相对路径
                 full_image_path = self.root / self.paths[index] #  完整的路径
+                sha1 = get_sha1(full_image_path) #  sha1 计算使用构造的完整路径
 
             original_size = img.shape[:2]
             img, dhdw = self.fit_bucket_func(index, img)
             img = self.tr(img).to(self.dtype)
-            sha1 = get_sha1(full_image_path) #  sha1 计算使用构造的完整路径
 
             # 从 prompt_data 中获取 prompt 和 extra 信息
             if image_path_str in self.prompt_data:
