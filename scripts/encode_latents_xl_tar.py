@@ -531,8 +531,8 @@ if __name__ == "__main__":
         dataset = LatentEncodingDataset(root, dtype=dtype, no_upscale=args.no_upscale)
 
     #  使用 DistributedSampler，如果需要
-    # sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False) if world_size > 1 else None
-    dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers) # , sampler=sampler)  sampler 在这里不需要，因为数据分割已经在 TarDataset 中完成
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False) if world_size > 1 else None
+    dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers, sampler=sampler)
     opt.mkdir(exist_ok=True, parents=True)
     assert opt.is_dir(), f"{opt} is not a directory"
 
