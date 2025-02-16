@@ -95,8 +95,8 @@ class LatentEncodingDataset(Dataset):
         if no_upscale:
             self.fit_bucket_func = self.fit_bucket_no_upscale
 
-        self.target_area = 1024 * 1024
-        self.max_size, self.min_size, self.divisible = 2048, 512, 64
+        self.target_area = 1536 * 1536
+        self.max_size, self.min_size, self.divisible = 4096, 512, 64
         self.generate_buckets()
         self.assign_buckets()
 
@@ -255,8 +255,8 @@ class TarDataset(Dataset):
         if no_upscale:
             self.fit_bucket_func = self.fit_bucket_no_upscale
 
-        self.target_area = 1024 * 1024
-        self.max_size, self.min_size, self.divisible = 2048, 512, 64
+        self.target_area = 1536 * 1536
+        self.max_size, self.min_size, self.divisible = 4096, 512, 64
         self.generate_buckets()
         self.assign_buckets()
         print(f"Rank {rank}: Loaded {len(self.image_entries)} images from tar files") #  显示 Rank 信息
@@ -505,7 +505,6 @@ def get_args():
     parser.add_argument("--num_workers", "-n", type=int, default=6, help="数据加载器 worker 数量。") #  更清晰的 help (中文)
     parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="存储包含图片 prompt 和 extra 信息的 JSON 文件路径。") #  用于存储包含图片prompt和extra的的json
     parser.add_argument("--use_tar", "-ut", action="store_true", help="启用 tar 文件处理。如果输入是目录并且设置了此标志，则将在目录中搜索并处理 .tar 文件。") #  更详细的 use_tar help (中文)
-    parser.add_argument("--merge_cache", "-mc", action="store_true", help="合并分布式缓存文件到单个文件 (仅 Rank 0)。") #  新增参数用于合并缓存
     args = parser.parse_args()
     return args
 
@@ -604,7 +603,7 @@ if __name__ == "__main__":
         json.dump(dataset_mapping, f_json, indent=4)
     print(f"Rank {rank}: Dataset mapping saved to {dataset_json_file}") #  显示 Rank 信息
 
-    if merge_cache and rank == 0: #  仅 rank 0 执行合并操作
+    if  rank == 0: #  仅 rank 0 执行合并操作
         print("Rank 0: Starting cache merging...")
         merged_dataset_mapping = {}
         merged_h5_file = h5.File(opt / "cache_merged.h5", 'w', libver='latest') #  合并后的 h5 文件名
