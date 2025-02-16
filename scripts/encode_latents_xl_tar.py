@@ -559,7 +559,7 @@ if __name__ == "__main__":
         cache_filename = f"cache_{h5_file_count}.h5"
         print(f"Creating new cache file: {cache_filename}")
         current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
-
+    count = 0
     # Main processing loop
     for item in tqdm(dataloader):
         if use_tar:
@@ -573,7 +573,7 @@ if __name__ == "__main__":
 
         # Skip processing if already in mapping (resume support)
         if sha1 in dataset_mapping:
-            print(f"\033[33mWarning: {basepath} with sha1 {sha1} already processed. Skipping...\033[0m")
+            count += 1
             continue
 
         h, w = original_size
@@ -616,4 +616,4 @@ if __name__ == "__main__":
     # Save updated dataset mapping to JSON, merging with existing mapping if present
     with open(dataset_json_file, "w") as f:
         json.dump(dataset_mapping, f, indent=4)
-    print("Dataset processing complete.")
+    print(f"Dataset processing complete. Total skipped existing images: {count}")
