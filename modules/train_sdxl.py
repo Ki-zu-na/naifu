@@ -26,7 +26,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         # 构建 encode_latents_xl_ab.py 脚本的命令行参数
         encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
         output_path = latent_cache_dir
-        cache_num = config.advanced.get("cache_num", 12)
+        cache_num = config.dataset.get("cache_num", 12)
         command = [
             "python",
             encode_script_path,

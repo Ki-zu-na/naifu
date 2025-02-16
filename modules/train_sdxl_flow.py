@@ -38,7 +38,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             "-o", output_path,
             "-d", "bfloat16",
             "-nu",
-            "-n", str(config.advanced.get("cache_num", 12)),
+            "-n", str(config.dataset.get("cache_num", 12)),
             "-ut" if use_tar else ""
         ]
         logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
