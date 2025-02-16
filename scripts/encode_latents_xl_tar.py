@@ -531,6 +531,8 @@ def get_args():
 
 if __name__ == "__main__":
     rank, world_size = setup_distributed() #  初始化分布式环境
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
     args = get_args()
     root = args.input
     opt = Path(args.output)
