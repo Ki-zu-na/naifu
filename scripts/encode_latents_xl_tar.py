@@ -25,6 +25,13 @@ import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 from common.utils import get_free_port
 
+def get_free_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
 def setup_distributed():
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()

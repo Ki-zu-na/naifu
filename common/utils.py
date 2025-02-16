@@ -5,7 +5,6 @@ import safetensors.torch
 import torch.utils._device
 import argparse
 import sys
-import socket
 from common.logging import logger
 from tqdm import tqdm
 
@@ -178,11 +177,4 @@ def get_latest_checkpoint(checkpoint_dir: str):
     if not items:
         return None
     return os.path.join(checkpoint_dir, items[-1])
-
-def get_free_port():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
 
