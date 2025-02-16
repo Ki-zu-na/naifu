@@ -419,21 +419,23 @@ class TarDataset(Dataset):
         img = img[dh : dh + target_h, dw : dw + target_w]
         return img, (dh, dw)
 
-    def __getitem__(self, index) -> tuple[torch.Tensor, str, str, str, tuple[int, int], tuple[int, int], dict]: # 添加 extra 到返回值
+    def __getitem__(self, index) -> tuple[torch.Tensor, str, str, str, tuple[int, int], tuple[int, int], dict]:
         sha256 = self.image_entries[index]
         tar_info = self.image_metadatas[sha256]
         try:
             with tarfile.open(tar_info["tar_path"], 'r') as tar:
-                f = tar.extractfile(tarinfo=tarfile.TarInfo(name=tar_info["filename"])) # 使用文件名创建 TarInfo 对象
-                if f is None: # 检查 extractfile 是否返回 None
-                    raise Exception(f"Failed to extract file {tar_info['filename']} from {tar_info['tar_path']}")
-                _img = Image.open(f)
+                # 利用 tar.fileobj 根据 offset 和 size 来读取数据
+                tar_fileobj = tar.fileobj
+                tar_fileobj.seek(tar_info["offset"])
+                image_data = tar_fileobj.read(tar_info["size"])
+                fileobj = io.BytesIO(image_data)
+                _img = Image.open(fileobj)
 
                 if _img.mode == "RGB":
                     img = np.array(_img)
                 elif _img.mode == "RGBA":
                     # transparent images
-                    baimg = Image.new('RGB', _img.size, (255, 255, 255))
+                    baimg = Image.new("RGB", _img.size, (255, 255, 255))
                     baimg.paste(_img, (0, 0), _img)
                     img = np.array(baimg)
                 else:
@@ -442,14 +444,14 @@ class TarDataset(Dataset):
                 original_size = img.shape[:2]
                 img, dhdw = self.fit_bucket_func(index, img)
                 img = self.tr(img).to(self.dtype)
-                prompt = tar_info.get("caption", "") # 从元数据获取 caption
-                extra = tar_info.get("extra", {}) # 从元数据获取 extra
+                prompt = tar_info.get("caption", "")  # 从元数据中获取 caption
+                extra = tar_info.get("extra", {})       # 从元数据中获取 extra
 
         except Exception as e:
             print(f"\033[31mError processing {tar_info['filename']} from {tar_info['tar_path']}: {e}\033[0m")
-            return None, str(tar_info["tar_path"]), None, None, None, None, None # 错误返回类型包含 extra
+            return None, str(tar_info["tar_path"]), None, None, None, None, None  # 错误返回类型包含 extra
 
-        return img, str(tar_info["tar_path"]), prompt, sha256, original_size, dhdw, extra # 返回 extra
+        return img, str(tar_info["tar_path"]), prompt, sha256, original_size, dhdw, extra  # 返回 extra 信息
 
 
     def __len__(self):
