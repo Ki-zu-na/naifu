@@ -53,15 +53,19 @@ def load_entry(p: Path, tar_file_handle=None, tar_file_offset=None, tar_file_siz
         # 从文件路径读取图像
         _img = Image.open(p)
 
-    if _img.mode == "RGB":
-        img = np.array(_img)
-    elif _img.mode == "RGBA":
-        baimg = Image.new('RGB', _img.size, (255, 255, 255))
-        baimg.paste(_img, (0, 0), _img)
-        img = np.array(baimg)
-    else:
-        img = np.array(_img.convert("RGB"))
-    return img
+    try: #  添加 try-except 块来捕获 numpy 转换错误
+        if _img.mode == "RGB":
+            img = np.array(_img)
+        elif _img.mode == "RGBA":
+            baimg = Image.new('RGB', _img.size, (255, 255, 255))
+            baimg.paste(_img, (0, 0), _img)
+            img = np.array(baimg)
+        else:
+            img = np.array(_img.convert("RGB"))
+        return img
+    except Exception as e: #  捕获 numpy 转换可能出现的异常
+        print(f"\033[31mError converting image to numpy array: {p} - {e}\033[0m") #  打印错误信息，包括路径和异常
+        return None #  返回 None 表示加载失败
 
 def get_sha1(path: Path):
     with open(path, "rb") as f:
@@ -210,9 +214,17 @@ class LatentEncodingDataset(Dataset):
                 if self.is_tar_input:
                     tar_path, filename_in_tar, offset, size = self.tar_index_map[p_index]
                     tar_file_handle = self.tar_file_handles[tar_path] # 从预先打开的句柄字典中获取
-                    img = self._load_entry_from_tar(tar_file_handle, offset, size) # 使用修改后的 _load_entry_from_tar 函数
+                    img, image_data = self._load_entry_from_tar(tar_file_handle, offset, size) # 使用修改后的 _load_entry_from_tar 函数
+                    if img is None: #  检查 load_entry 是否返回 None
+                        print(f"\033[33mSkipped: error processing {filename_in_tar} from {tar_path}: failed to load image data\033[0m")
+                        remove_paths.append(p_index)
+                        continue #  如果图像加载失败，跳过当前图像
                 else:
                     img = load_entry(self.root / self.paths[p_index])
+                    if img is None: #  检查 load_entry 是否返回 None
+                        print(f"\033[33mSkipped: error processing {self.paths[p_index]}: failed to load image data\033[0m")
+                        remove_paths.append(p_index)
+                        continue #  如果图像加载失败，跳过当前图像
                 h, w = Image.fromarray(img).size #  使用 Image.fromarray 获取 PIL Image 对象
                 self.raw_res.append((h, w))
             except Exception as e:
@@ -378,6 +390,8 @@ class LatentEncodingDataset(Dataset):
                 sha1 = hashlib.sha1(image_data).hexdigest() # 对图像数据计算 sha1
             else:
                 img = load_entry(self.root / self.paths[index])
+                if img is None: #  检查 load_entry 是否返回 None
+                    return None #  如果图像加载失败，__getitem__ 也返回 None
                 image_path_str = str(self.paths[index]) #  目录输入使用相对路径
                 full_image_path = self.root / self.paths[index] #  完整的路径
                 sha1 = get_sha1(full_image_path) #  sha1 计算使用构造的完整路径
