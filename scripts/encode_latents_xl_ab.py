@@ -149,7 +149,7 @@ class LatentEncodingDataset(Dataset):
                             index_counter += 1
                 if self.is_tar_input and self.tar_paths: #  只有当找到 tar 文件时才打开
                     #  这里假设只处理一个 tar 文件，如果需要处理多个 tar 文件，可能需要修改 tar_file_handle 的管理方式
-                    self.tar_file_handle = tarfile.open(str(self.tar_paths[0]), 'r') # 打开 第一个 tar 文件，如果存在多个 tar 文件，这里需要修改
+                    self.tar_file_handle = None #  修改：不再在 __init__ 中打开 tar 文件
             else: #  如果 use_tar 为 False，则查找目录下的图片
                 self.is_tar_input = False
                 for artist_folder in self.root.iterdir():
@@ -181,7 +181,7 @@ class LatentEncodingDataset(Dataset):
                         self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
                         index_counter += 1
             if self.is_tar_input:
-                self.tar_file_handle = tarfile.open(self.root, 'r') # 打开 tar 文件
+                self.tar_file_handle = None #  修改：不再在 __init__ 中打开 tar 文件
         else:
             raise ValueError(f"Unsupported input root: {root}. Must be a directory or a .tar file.")
 
@@ -201,9 +201,11 @@ class LatentEncodingDataset(Dataset):
             try:
                 if self.is_tar_input:
                     tar_path, filename_in_tar, offset, size = self.tar_index_map[p_index]
-                    img = load_entry(Path(filename_in_tar), self.tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
+                    #  修改：在循环内部打开和关闭 tar 文件
+                    with tarfile.open(tar_path, 'r') as tar_file_handle:
+                        img = load_entry(Path(filename_in_tar), tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
                 else:
-                    img = load_entry(self.root / self.paths[p_index]) #  路径需要拼接 root
+                    img = load_entry(self.root / self.paths[p_index])
                 h, w = Image.fromarray(img).size #  使用 Image.fromarray 获取 PIL Image 对象
                 self.raw_res.append((h, w))
             except Exception as e:
@@ -332,7 +334,9 @@ class LatentEncodingDataset(Dataset):
         try:
             if self.is_tar_input:
                 tar_path, filename_in_tar, offset, size = self.tar_index_map[index]
-                img = load_entry(Path(filename_in_tar), self.tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
+                #  修改：在 getitem 内部打开和关闭 tar 文件
+                with tarfile.open(tar_path, 'r') as tar_file_handle:
+                    img = load_entry(Path(filename_in_tar), tar_file_handle, offset, size) # 使用 load_entry 函数处理 tar 文件
                 image_path_str = filename_in_tar #  tar 文件中使用文件名作为 key
                 full_image_path = Path(tar_path) / filename_in_tar #  为了 extras 里的 path 信息，需要构造一个路径，但实际上并不存在于文件系统
             else:
