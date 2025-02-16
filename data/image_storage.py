@@ -122,9 +122,32 @@ class StoreBase(Dataset):
         cropped_sizes = []
         extras = []
 
+        # 找到批次中最小的高度和宽度
+        min_h = min(e.pixel.shape[-2] for e in entries)
+        min_w = min(e.pixel.shape[-1] for e in entries)
+
         for e, i in zip(entries, indices):
             e = self.process_batch(e)
-            #logger.debug(f"Prompt processed: {e.prompt}")
+            
+            # 如果需要裁剪
+            if e.pixel.shape[-2] > min_h or e.pixel.shape[-1] > min_w:
+                # 计算可能的裁剪范围
+                h_max_start = e.pixel.shape[-2] - min_h
+                w_max_start = e.pixel.shape[-1] - min_w
+                
+                # 随机选择裁剪起始位置
+                h_start = torch.randint(0, h_max_start + 1, (1,)).item() if h_max_start > 0 else 0
+                w_start = torch.randint(0, w_max_start + 1, (1,)).item() if w_max_start > 0 else 0
+                
+                # 裁剪图像
+                e.pixel = e.pixel[..., h_start:h_start+min_h, w_start:w_start+min_w]
+                
+                # 更新dhdw以反映裁剪位置
+                if e.dhdw is None:
+                    e.dhdw = (h_start, w_start)
+                else:
+                    e.dhdw = (e.dhdw[0] + h_start, e.dhdw[1] + w_start)
+            
             e, dh, dw = self.crop(e, i)
             pixels.append(e.pixel)
             original_size = torch.asarray(e.original_size)
@@ -143,7 +166,8 @@ class StoreBase(Dataset):
             cropped_pos = (
                 (cropped_pos[0] * 8, cropped_pos[1] * 8) if e.is_latent else cropped_pos
             )
-            cropped_pos = (cropped_pos[0] + e.dhdw[0], cropped_pos[1] + e.dhdw[1])
+            if e.dhdw is not None:
+                cropped_pos = (cropped_pos[0] + e.dhdw[0], cropped_pos[1] + e.dhdw[1])
             cropped_pos = torch.asarray(cropped_pos)
             crop_pos.append(cropped_pos)
             prompts.append(e.prompt)
