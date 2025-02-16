@@ -265,13 +265,13 @@ class TarDataset(Dataset):
             try:
                 with open(json_path, 'r') as f:
                     tar_metadata = json.load(f)
-                tar_hash = tar_metadata.get("hash") # 使用 tar 文件的 hash 作为标识
+                tar_hash = tar_metadata.get("hash")  # 使用 tar 文件的 hash 作为标识
                 if not tar_hash:
                     print(f"\033[33mWarning: 'hash' not found in {json_path} for {tar_path}. Skipping tar file.\033[0m")
                     continue
 
                 for filename, file_info in tar_metadata["files"].items():
-                    if is_img(Path(filename)): # 仅处理图像文件
+                    if is_img(Path(filename)):  # 仅处理图像文件
                         sha256 = file_info.get("sha256")
                         if not sha256:
                             print(f"\033[33mWarning: 'sha256' not found for {filename} in {json_path}. Skipping image.\033[0m")
@@ -281,26 +281,32 @@ class TarDataset(Dataset):
                             print(f"\033[33mWarning: Duplicate sha256 {sha256} found. Skipping duplicate entry.\033[0m")
                             continue
 
-                        self.image_metadatas[sha256] = { # 存储图像元数据
+                        self.image_metadatas[sha256] = {  # 存储图像元数据
                             "tar_path": tar_path,
                             "offset": file_info["offset"],
                             "size": file_info["size"],
                             "filename": filename,
                             "sha256": sha256,
-                            "tar_hash": tar_hash # 记录 tar hash
+                            "tar_hash": tar_hash  # 记录 tar hash
                         }
 
-                        # 尝试从 global_metadata 中获取 caption 和 extra
-                        global_meta_entry = global_metadata.get(Path(filename).stem) # 使用文件名 (不带后缀) 查找
-                        if global_meta_entry:
-                            self.image_metadatas[sha256]["caption"] = global_meta_entry.get("tag_string_general", "") # 提取 caption
-                            extra_keys = ["tag_string_character", "tag_string_copyright", "tag_string_artist", "tag_string_meta", "score", "regular_summary", "individual_parts", "midjourney_style_summary", "deviantart_commission_request", "brief_summary", "rating", "aes_rating"]
-                            self.image_metadatas[sha256]["extra"] = {k: global_meta_entry.get(k, "") for k in extra_keys} # 提取 extra 信息
-                        else:
-                            self.image_metadatas[sha256]["caption"] = "" # 默认 caption 为空
-                            self.image_metadatas[sha256]["extra"] = {} # 默认 extra 为空
+                        # 当全局 meta 中不包含该图片，则跳过处理该图片
+                        global_meta_entry = global_metadata.get(Path(filename).stem)  # 使用文件名 (不带后缀) 查找
+                        if not global_meta_entry:
+                            print(f"\033[33mSkipping image {filename} because global metadata is missing.\033[0m")
+                            continue
 
-                        self.image_entries.append(sha256) # 存储 sha256 作为索引
+                        self.image_metadatas[sha256]["caption"] = global_meta_entry.get("tag_string_general", "")  # 提取 caption
+                        extra_keys = [
+                            "tag_string_general",
+                            "tag_string_character", "tag_string_copyright", "tag_string_artist",
+                            "tag_string_meta", "score", "regular_summary", "individual_parts",
+                            "midjourney_style_summary", "deviantart_commission_request",
+                            "brief_summary", "rating", "aes_rating"
+                        ]
+                        self.image_metadatas[sha256]["extra"] = {k: global_meta_entry.get(k, "") for k in extra_keys}  # 提取 extra 信息
+
+                        self.image_entries.append(sha256)  # 存储 sha256 作为索引
             except json.JSONDecodeError as e:
                 print(f"\033[31mError decoding JSON in {json_path}: {e}. Skipping tar file.\033[0m")
             except KeyError as e:
