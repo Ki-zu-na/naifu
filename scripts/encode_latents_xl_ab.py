@@ -87,7 +87,7 @@ def dirwalk(path: Path, cond: Optional[Callable] = None) -> Generator[Path, None
 
 
 class LatentEncodingDataset(Dataset):
-    def __init__(self, root: str | Path, dtype=torch.float32, no_upscale=False, metadata_json_path=None):
+    def __init__(self, root: str | Path, dtype=torch.float32, no_upscale=False, metadata_json_path=None, use_tar=False):
         self.tr = transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -103,6 +103,7 @@ class LatentEncodingDataset(Dataset):
         self.tar_index_map = {} # 索引到 (tar_path, filename_in_tar) 的映射
         self.is_tar_input = False # 标志是否为 tar 文件输入
         self.tar_file_handle = None # 用于存储打开的 tar 文件句柄
+        self.use_tar = use_tar #  保存 use_tar 参数
 
         if self.metadata_json_path:
             try:
@@ -117,11 +118,40 @@ class LatentEncodingDataset(Dataset):
 
         # 检查输入路径是目录还是 tar 文件
         if self.root.is_dir():
-            self.is_tar_input = False
-            for artist_folder in self.root.iterdir():
-                if artist_folder.is_dir():
-                    self.paths.extend(sorted(list(dirwalk(artist_folder, is_img))))
-        elif self.root.suffix == '.tar':
+            if self.use_tar: #  如果 use_tar 为 True，则查找 tar 文件
+                self.is_tar_input = True #  设置为 tar 输入模式
+                self.tar_paths = [p for p in self.root.iterdir() if p.suffix == '.tar'] #  查找目录下的 tar 文件
+                index_counter = 0
+                for tar_path in self.tar_paths:
+                    meta_path = tar_path.with_suffix(".json") # 假设同名 json 文件
+                    try:
+                        with open(meta_path, 'r') as f:
+                            self.tar_file_metas[tar_path] = json_lib.load(f)
+                    except FileNotFoundError:
+                        print(f"\033[33mWarning: Meta JSON file not found: {meta_path} for {tar_path}\033[0m")
+                        continue # 如果 meta json 不存在，则跳过此 tar 文件
+                    except json.JSONDecodeError:
+                        print(f"\033[31mError decoding JSON in {meta_path} for {tar_path}. Please ensure it is valid JSON.\033[0m")
+                        continue
+
+                    if not self.tar_file_metas[tar_path] or 'files' not in self.tar_file_metas[tar_path]:
+                        print(f"\033[33mWarning: Invalid meta JSON format in {meta_path} for {tar_path}. 'files' key is missing or empty.\033[0m")
+                        continue
+
+                    for filename_in_tar, file_info in self.tar_file_metas[tar_path]['files'].items():
+                        if is_img(Path(filename_in_tar)): # 仅处理图像文件
+                            self.paths.append(filename_in_tar) #  存储 tar 内的文件名
+                            self.tar_index_map[index_counter] = (tar_path, filename_in_tar, file_info['offset'], file_info['size']) # 存储 tar 文件路径，文件名和偏移量/大小
+                            index_counter += 1
+                if self.is_tar_input and self.tar_paths: #  只有当找到 tar 文件时才打开
+                    #  这里假设只处理一个 tar 文件，如果需要处理多个 tar 文件，可能需要修改 tar_file_handle 的管理方式
+                    self.tar_file_handle = tarfile.open(str(self.tar_paths[0]), 'r') # 打开 第一个 tar 文件，如果存在多个 tar 文件，这里需要修改
+            else: #  如果 use_tar 为 False，则查找目录下的图片
+                self.is_tar_input = False
+                for artist_folder in self.root.iterdir():
+                    if artist_folder.is_dir():
+                        self.paths.extend(sorted(list(dirwalk(artist_folder, is_img))))
+        elif self.root.suffix == '.tar': #  保持对直接输入 tar 文件的兼容
             self.is_tar_input = True
             self.tar_paths = [self.root] #  处理单个 tar 文件路径
             index_counter = 0
@@ -148,7 +178,6 @@ class LatentEncodingDataset(Dataset):
                         index_counter += 1
             if self.is_tar_input:
                 self.tar_file_handle = tarfile.open(self.root, 'r') # 打开 tar 文件
-
         else:
             raise ValueError(f"Unsupported input root: {root}. Must be a directory or a .tar file.")
 
@@ -349,6 +378,7 @@ def get_args():
     parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="data type")
     parser.add_argument("--num_workers", "-n", type=int, default=6, help="number of dataloader workers")
     parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="path to metadata json file")
+    parser.add_argument("--use_tar", "-ut", action="store_true", help="use tar files in the input directory") #  新增 use_tar 选项
     args = parser.parse_args()
     return args
 
@@ -366,7 +396,7 @@ if __name__ == "__main__":
     vae.requires_grad_(False)
     vae.eval().cuda()
 
-    dataset = LatentEncodingDataset(root, dtype=dtype, no_upscale=args.no_upscale, metadata_json_path=metadata_json_path)
+    dataset = LatentEncodingDataset(root, dtype=dtype, no_upscale=args.no_upscale, metadata_json_path=metadata_json_path, use_tar=args.use_tar)
     dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers)
     opt.mkdir(exist_ok=True, parents=True)
     assert opt.is_dir(), f"{opt} is not a directory"
