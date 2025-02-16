@@ -34,7 +34,6 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             num_gpus_to_use = config.advanced.get("cache_latents_num_gpus", 4)
             cache_command = [
                 "torchrun",
-                "--standalone",
                 f"--nproc_per_node={num_gpus_to_use}",
                 encode_script_path,  # 缓存脚本路径
                 "-i", tar_dirs if use_tar else img_path,
