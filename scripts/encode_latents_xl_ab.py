@@ -468,6 +468,7 @@ if __name__ == "__main__":
                     f.close()
                     current_file_index += 1
                     f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list)
+                    f = h5.File(h5_cache_file, "w", libver="latest")
 
     with open(opt / "dataset.json", "w") as f:
         json.dump(dataset_mapping, f, indent=4)
