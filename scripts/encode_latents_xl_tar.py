@@ -421,12 +421,13 @@ class TarDataset(Dataset):
         img = img[dh : dh + target_h, dw : dw + target_w]
         return img, (dh, dw)
 
+    @torch.no_grad()
     def __getitem__(self, index) -> tuple[torch.Tensor, str, str, str, tuple[int, int], tuple[int, int], dict]:
         sha256 = self.image_entries[index]
         tar_info = self.image_metadatas[sha256]
         try:
             with tarfile.open(tar_info["tar_path"], 'r') as tar:
-                # 利用 tar.fileobj 根据 offset 和 size 来读取数据
+                # 使用 tar_fileobj 根据 offset 和 size 读取数据
                 tar_fileobj = tar.fileobj
                 tar_fileobj.seek(tar_info["offset"])
                 image_data = tar_fileobj.read(tar_info["size"])
@@ -436,7 +437,7 @@ class TarDataset(Dataset):
                 if _img.mode == "RGB":
                     img = np.array(_img)
                 elif _img.mode == "RGBA":
-                    # transparent images
+                    # 透明图像处理
                     baimg = Image.new("RGB", _img.size, (255, 255, 255))
                     baimg.paste(_img, (0, 0), _img)
                     img = np.array(baimg)
@@ -446,14 +447,16 @@ class TarDataset(Dataset):
                 original_size = img.shape[:2]
                 img, dhdw = self.fit_bucket_func(index, img)
                 img = self.tr(img).to(self.dtype)
-                prompt = tar_info.get("caption", "")  # 从元数据中获取 caption
-                extra = tar_info.get("extra", {})       # 从元数据中获取 extra
-
+                prompt = tar_info.get("caption", "")
+                extra = tar_info.get("extra", {})
+                
+                # 统一计算 SHA1，与目录模式保持一致
+                new_sha1 = hashlib.sha1(image_data).hexdigest()
         except Exception as e:
             print(f"\033[31mError processing {tar_info['filename']} from {tar_info['tar_path']}: {e}\033[0m")
-            return None, str(tar_info["tar_path"]), None, None, None, None, None  # 错误返回类型包含 extra
+            return None, str(tar_info["tar_path"]), None, None, None, None, None
 
-        return img, str(tar_info["tar_path"]), prompt, sha256, original_size, dhdw, extra  # 返回 extra 信息
+        return img, str(tar_info["tar_path"]), prompt, new_sha1, original_size, dhdw, extra
 
 
     def __len__(self):
@@ -479,6 +482,7 @@ if __name__ == "__main__":
     args = get_args()
     root = args.input
     opt = Path(args.output)
+    opt.mkdir(exist_ok=True, parents=True)
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     num_workers = args.num_workers
     use_tar = args.use_tar
@@ -497,79 +501,108 @@ if __name__ == "__main__":
         dataset = LatentEncodingDataset(root, dtype=dtype, no_upscale=args.no_upscale)
 
     dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers)
-    opt.mkdir(exist_ok=True, parents=True)
-    assert opt.is_dir(), f"{opt} 不是一个目录: {opt}" #  中文错误信息
 
-    dataset_mapping = {}
-    h5_file_count = 0 # 用于多 h5 文件计数
-    current_h5_file = None # 当前 h5 文件对象
-    h5_datasets_count = 0 # 当前 h5 文件中的数据集数量
-    max_h5_size = 40 * 1024 * 1024 * 1024 # 40GB 最大 h5 文件大小
+    # Load or initialize dataset mapping from dataset.json for resume support
+    dataset_json_file = opt / "dataset.json"
+    if dataset_json_file.exists():
+        with open(dataset_json_file, "r") as f:
+            dataset_mapping = json.load(f)
+        print(f"Loaded {len(dataset_mapping)} entries from existing dataset mapping.")
+    else:
+        dataset_mapping = {}
 
-    def _create_new_h5_file():  # 创建新 h5 文件的辅助函数
-        global h5_file_count, current_h5_file, h5_datasets_count
+    # Handle existing h5 cache files for resume support
+    max_h5_size = 40 * 1024 * 1024 * 1024  # 40GB maximum h5 file size
+    existing_h5_files = list(opt.glob("cache_*.h5"))
+    if existing_h5_files:
+        def get_index(p: Path):
+            try:
+                return int(p.stem.split('_')[-1])
+            except Exception:
+                return 0
+
+        existing_h5_files.sort(key=get_index)
+        current_h5_path = existing_h5_files[-1]
+        h5_file_count = get_index(current_h5_path)
+        current_h5_file = h5.File(current_h5_path, "r+", libver="latest")
+        if current_h5_file.id.get_filesize() > max_h5_size:
+            current_h5_file.close()
+            h5_file_count += 1
+            cache_filename = f"cache_{h5_file_count}.h5"
+            print(f"Creating new cache file: {cache_filename} due to size limit.")
+            current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
+        else:
+            print(f"Appending to existing cache file: {current_h5_path}")
+    else:
+        h5_file_count = 1
+        cache_filename = f"cache_{h5_file_count}.h5"
+        print(f"Creating new cache file: {cache_filename}")
+        current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
+
+    def _create_new_h5_file():
+        """Helper function to create a new h5 file when size limit is exceeded."""
+        global h5_file_count, current_h5_file
         if current_h5_file:
-            current_h5_file.close()  # 关闭旧文件
+            current_h5_file.close()
         h5_file_count += 1
-        cache_filename = f"cache_{h5_file_count}.h5" # 使用计数器命名 h5 文件
-        h5_cache_file = opt / cache_filename
-        print(f"Saving cache to {h5_cache_file}")
-        current_h5_file = h5.File(h5_cache_file, "w", libver="latest") # 创建新文件
-        h5_datasets_count = 0 # 重置数据集计数
+        cache_filename = f"cache_{h5_file_count}.h5"
+        print(f"Creating new cache file: {cache_filename}")
+        current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
 
-    _create_new_h5_file() # 初始化第一个 h5 文件
+    # Main processing loop
+    for item in tqdm(dataloader):
+        if use_tar:
+            img, basepath, prompt, sha1, original_size, dhdw, extra = item
+        else:
+            img, basepath, prompt, sha1, original_size, dhdw = item
 
-    with torch.no_grad():
-        for item in tqdm(dataloader): # dataloader 返回的 item 根据 Dataset 类型变化
-            if use_tar:
-                img, basepath, prompt, sha1, original_size, dhdw, extra = item # TarDataset 返回 extra
-            else:
-                img, basepath, prompt, sha1, original_size, dhdw = item # LatentEncodingDataset 不返回 extra
+        if sha1 is None:
+            print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
+            continue
 
-            if sha1 is None:
-                print(
-                    f"\033[33mWarning: {basepath} is invalid. Skipping... \033[0m"
-                )
-                continue
+        # Skip processing if already in mapping (resume support)
+        if sha1 in dataset_mapping:
+            print(f"\033[33mWarning: {basepath} with sha1 {sha1} already processed. Skipping...\033[0m")
+            continue
 
-            h, w = original_size
-            dataset_mapping[sha1] = {
-                "train_use": True if prompt else False,
-                "train_caption": prompt,
-                "file_path": str(basepath),
-                "train_width": w,
-                "train_height": h,
-            }
-            if use_tar:
-                dataset_mapping[sha1]["extra"] = extra # 存储 extra 信息 (如果 use_tar)
+        h, w = original_size
+        dataset_mapping[sha1] = {
+            "train_use": True if prompt else False,
+            "train_caption": prompt,
+            "file_path": str(basepath),
+            "train_width": w,
+            "train_height": h,
+        }
+        if use_tar:
+            dataset_mapping[sha1]["extra"] = extra
 
-            if f"{sha1}.latents" in current_h5_file:
-                print(
-                    f"\033[33mWarning: {str(basepath)} is already cached. Skipping... \033[0m"
-                )
-                continue
+        # Check if dataset already exists in current h5 file
+        if f"{sha1}.latents" in current_h5_file:
+            print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
+            continue
 
-            img = img.unsqueeze(0).cuda()
-            latent = vae.encode(img, return_dict=False)[0]
-            latent.deterministic = True
-            latent = latent.sample()[0]
+        img = img.unsqueeze(0).cuda()
+        latent = vae.encode(img, return_dict=False)[0]
+        latent.deterministic = True
+        latent = latent.sample()[0]
 
-            # 检查当前 h5 文件大小，如果超过限制则创建新文件
-            if current_h5_file.id.get_filesize() > max_h5_size:
-                _create_new_h5_file()
+        # Check current h5 file size, create new file if exceeded size limit
+        if current_h5_file.id.get_filesize() > max_h5_size:
+            _create_new_h5_file()
 
-            d = current_h5_file.create_dataset( # 在当前 h5 文件中创建 dataset
-                f"{sha1}.latents",
-                data=latent.float().cpu().numpy(),
-                compression="gzip",
-            )
-            d.attrs["scale"] = False
-            d.attrs["dhdw"] = dhdw
-            h5_datasets_count += 1
+        dset = current_h5_file.create_dataset(
+            f"{sha1}.latents",
+            data=latent.float().cpu().numpy(),
+            compression="gzip",
+        )
+        dset.attrs["scale"] = False
+        dset.attrs["dhdw"] = dhdw
 
+    # Close the current h5 file
     if current_h5_file:
-        current_h5_file.close() # 关闭最后一个 h5 文件
+        current_h5_file.close()
 
-    with open(opt / "dataset.json", "w") as f:
+    # Save updated dataset mapping to JSON, merging with existing mapping if present
+    with open(dataset_json_file, "w") as f:
         json.dump(dataset_mapping, f, indent=4)
-    print("Dataset processing complete.") #  中文完成提示
+    print("Dataset processing complete.")
