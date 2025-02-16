@@ -17,6 +17,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     if config.advanced.get("cache_latents_before_train", False):
         latent_cache_dir = config.advanced.get("latent_cache_dir", "latent_cache")
         img_path = config.dataset.get("img_path") # 假设你的配置文件中 dataset 部分有 img_path 指向图像目录
+        tar_dirs = config.dataset.get("tar_dirs")
         metadata_path = config.dataset.get("metadata_json", "metadata.json")
         if not img_path:
             raise ValueError("必须在 dataset 配置中指定 'img_path' 以进行 latent 缓存。")
@@ -27,7 +28,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         command = [
             "python",
             encode_script_path,
-            "-i", img_path,
+            "-i", img_path if use_tar else tar_dirs,
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
