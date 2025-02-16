@@ -619,15 +619,19 @@ if __name__ == "__main__":
 
             torch.cuda.empty_cache()
 
-    f.close() #  关闭最后一个 h5 文件
+    f.close()  # 关闭最后一个 h5 文件
 
-    #  保存 dataset.json，文件名包含 rank
+    # 全局同步：确保所有进程都完成了缓存生成
+    if dist.is_initialized():
+        dist.barrier()
+
+    # 保存 dataset.json，文件名包含 rank
     dataset_json_file = opt / f"dataset_rank{rank}.json"
     with open(dataset_json_file, "w") as f_json:
         json.dump(dataset_mapping, f_json, indent=4)
-    print(f"Rank {rank}: Dataset mapping saved to {dataset_json_file}") #  显示 Rank 信息
+    print(f"Rank {rank}: Dataset mapping saved to {dataset_json_file}")  # 显示 Rank 信息
 
-    if  rank == 0: #  仅 rank 0 执行合并操作
+    if rank == 0:  # 仅 rank 0 执行合并操作
         print("Rank 0: Starting cache merging...")
         merged_dataset_mapping = {}
         merged_h5_file = h5.File(opt / "cache_merged.h5", 'w', libver='latest') #  合并后的 h5 文件名
