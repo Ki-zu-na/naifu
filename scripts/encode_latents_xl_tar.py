@@ -620,7 +620,7 @@ if __name__ == "__main__":
             torch.cuda.empty_cache()
 
     f.close()  # 关闭最后一个 h5 文件
-
+    print(f"Rank {rank}: Completed encoding latents.")
     # 全局同步：确保所有进程都完成了缓存生成
     if dist.is_initialized():
         dist.barrier()
@@ -654,6 +654,7 @@ if __name__ == "__main__":
         with open(merged_dataset_json_file, "w") as f_json:
             json.dump(merged_dataset_mapping, f_json, indent=4)
         print(f"Rank 0: Merged dataset mapping saved to {merged_dataset_json_file}")
+        print(f"Rank 0: Have {len(merged_dataset_mapping)} images.")
 
         # 收集所有 rank 的 h5 文件并合并，使用相对模式
         pattern = f"{cache_filename_prefix}_rank*.h5"
@@ -695,6 +696,6 @@ if __name__ == "__main__":
                     if rank_h5_file.exists():
                         os.remove(rank_h5_file)
             print("Rank 0: Rank-specific cache files and dataset JSONs cleaned up.")
-        print(f"Rank 0: Cache merging complete. Have {len(dataset_mapping)} images.")
+        print(f"Rank 0: Cache merging complete.") 
     if dist.is_initialized(): #  检查分布式环境是否初始化
         dist.destroy_process_group() #  清理分布式环境
