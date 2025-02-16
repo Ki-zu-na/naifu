@@ -26,6 +26,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         # 构建 encode_latents_xl_ab.py 脚本的命令行参数
         encode_script_path = "scripts/encode_latents_xl_tar.py" # 假设脚本路径
         output_path = latent_cache_dir
+        cache_num = config.advanced.get("cache_num", 12)
         command = [
             "python",
             encode_script_path,
@@ -33,7 +34,9 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
             "-metadata", metadata_path,
             "-o", output_path,
             "-d", "bfloat16",
-            "-nu", "-ut" if use_tar else ""
+            "-nu", 
+            "-n", str(cache_num),
+            "-ut" if use_tar else ""
         ]
         logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
         logger.info(f"执行命令: {' '.join(command)}")
