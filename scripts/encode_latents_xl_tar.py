@@ -634,38 +634,38 @@ if __name__ == "__main__":
     if rank == 0:  # 仅 rank 0 执行合并操作
         print("Rank 0: Starting cache merging...")
         merged_dataset_mapping = {}
-        merged_h5_file = h5.File(opt / "cache_merged.h5", 'w', libver='latest') #  合并后的 h5 文件名
-        merged_h5_file_list = [opt / "cache_merged.h5"] #  合并后的 h5 文件列表
+        merged_h5_file = h5.File(opt / "cache_merged.h5", 'w', libver='latest')  # 合并后的 h5 文件名
+        merged_h5_file_list = [opt / "cache_merged.h5"]  # 合并后的 h5 文件列表
         current_merged_file_index = 0
 
-        #  收集所有 rank 的 dataset.json 文件并合并
+        # 收集合并各 rank 的 dataset.json 文件
         for r in range(world_size):
             dataset_json_path = opt / f"dataset_rank{r}.json"
             if dataset_json_path.exists():
                 with open(dataset_json_path, 'r') as f_json:
                     rank_dataset_mapping = json.load(f_json)
                     merged_dataset_mapping.update(rank_dataset_mapping)
-                print(f"Rank 0: Merged dataset mapping from {dataset_json_path}") #  显示 Rank 信息
+                print(f"Rank 0: Merged dataset mapping from {dataset_json_path}")
             else:
-                print(f"\033[33mRank 0: Warning: Dataset JSON file {dataset_json_path} not found.\033[0m") #  显示 Rank 信息
+                print(f"\033[33mRank 0: Warning: Dataset JSON file {dataset_json_path} not found.\033[0m")
 
-        #  合并 dataset.json
+        # 合并 dataset.json
         merged_dataset_json_file = opt / "dataset.json"
         with open(merged_dataset_json_file, "w") as f_json:
             json.dump(merged_dataset_mapping, f_json, indent=4)
-        print(f"Rank 0: Merged dataset mapping saved to {merged_dataset_json_file}") #  显示 Rank 信息
+        print(f"Rank 0: Merged dataset mapping saved to {merged_dataset_json_file}")
 
-        #  收集所有 rank 的 h5 文件并合并
-        rank_h5_files_pattern = opt / f"{cache_filename_prefix}_rank*.h5"
-        rank_h5_files = sorted(list(opt.glob(str(rank_h5_files_pattern))))
-        print(f"Rank 0: Found {len(rank_h5_files)} rank-specific cache files to merge.") #  显示 Rank 信息
+        # 收集所有 rank 的 h5 文件并合并，使用相对模式
+        pattern = f"{cache_filename_prefix}_rank*.h5"
+        rank_h5_files = sorted(list(opt.glob(pattern)))
+        print(f"Rank 0: Found {len(rank_h5_files)} rank-specific cache files to merge.")
 
-        for rank_h5_file_path in tqdm(rank_h5_files, desc="Rank 0: Merging H5 files", ascii=True): #  合并 h5 文件的进度条
+        for rank_h5_file_path in tqdm(rank_h5_files, desc="Rank 0: Merging H5 files", ascii=True):
             if rank_h5_file_path.exists():
                 with h5.File(rank_h5_file_path, 'r', libver='latest') as rank_h5_file:
                     for key in rank_h5_file.keys():
                         if key in merged_h5_file:
-                            print(f"\033[33mRank 0: Warning: Key {key} already exists in merged H5 file. Skipping.\033[0m") #  显示 Rank 信息
+                            print(f"\033[33mRank 0: Warning: Key {key} already exists in merged H5 file. Skipping.\033[0m")
                             continue
                         data = rank_h5_file[key][:]
                         attrs = dict(rank_h5_file[key].attrs)
@@ -677,23 +677,24 @@ if __name__ == "__main__":
                             merged_h5_filename = f"cache_merged_part_{current_merged_file_index:03d}.h5"
                             merged_h5_file = h5.File(opt / merged_h5_filename, 'w', libver='latest')
                             merged_h5_file_list.append(opt / merged_h5_filename)
-                print(f"Rank 0: Merged {rank_h5_file_path} into merged cache.") #  显示 Rank 信息
+                print(f"Rank 0: Merged {rank_h5_file_path} into merged cache.")
             else:
-                print(f"\033[33mRank 0: Warning: Rank-specific H5 file {rank_h5_file_path} not found.\033[0m") #  显示 Rank 信息
+                print(f"\033[33mRank 0: Warning: Rank-specific H5 file {rank_h5_file_path} not found.\033[0m")
         merged_h5_file.close()
-        print(f"Rank 0: Merged cache files saved to {[str(p) for p in merged_h5_file_list]}") #  显示 Rank 信息
-        #  清理 rank 特定的缓存文件和 dataset.json
-        if not args.output.endswith(".tar"): #  如果输出不是 tar 文件，则清理
+        print(f"Rank 0: Merged cache files saved to {[str(p) for p in merged_h5_file_list]}")
+
+        # 清理 rank 特定的缓存文件和 dataset.json
+        if not args.output.endswith(".tar"):
             for r in range(world_size):
                 dataset_json_path = opt / f"dataset_rank{r}.json"
                 if dataset_json_path.exists():
                     os.remove(dataset_json_path)
-                rank_h5_files_pattern = opt / f"{cache_filename_prefix}_rank{r}_*.h5"
-                rank_h5_files = list(opt.glob(str(rank_h5_files_pattern)))
+                pattern = f"{cache_filename_prefix}_rank{r}_*.h5"
+                rank_h5_files = list(opt.glob(pattern))
                 for rank_h5_file in rank_h5_files:
                     if rank_h5_file.exists():
                         os.remove(rank_h5_file)
-            print("Rank 0: Rank-specific cache files and dataset JSONs cleaned up.") #  显示 Rank 信息
-        print("Rank 0: Cache merging complete.") #  显示 Rank 信息
+            print("Rank 0: Rank-specific cache files and dataset JSONs cleaned up.")
+        print(f"Rank 0: Cache merging complete. Have {len(dataset_mapping)} images.")
     if dist.is_initialized(): #  检查分布式环境是否初始化
         dist.destroy_process_group() #  清理分布式环境
