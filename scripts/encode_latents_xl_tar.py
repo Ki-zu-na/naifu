@@ -10,6 +10,7 @@ import torch
 import tarfile
 import io
 import os
+import socket
 
 from pathlib import Path
 from PIL import Image
@@ -23,16 +24,34 @@ from typing import Callable, Generator, Optional
 import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 
+def get_free_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
 def setup_distributed():
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        rank = int(os.environ['RANK'])
-        world_size = int(os.environ['WORLD_SIZE'])
-        dist.init_process_group(backend='nccl') #  或者 'gloo'，根据你的环境选择
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+        master_port = os.environ.get("MASTER_PORT", None)
+        if master_port is None:
+            master_port = str(get_free_port())
+            os.environ["MASTER_PORT"] = master_port
+        init_method = f"tcp://{master_addr}:{master_port}"
+        dist.init_process_group(
+            backend="nccl",
+            init_method=init_method,
+            rank=rank,
+            world_size=world_size
+        )
         return rank, world_size
     else:
-        return 0, 1 #  单 GPU 情况
+        return 0, 1
 
 def get_sha1(path: Path):
     with open(path, "rb") as f:
