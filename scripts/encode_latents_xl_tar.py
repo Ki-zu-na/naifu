@@ -598,7 +598,8 @@ if __name__ == "__main__":
                 continue
 
             img = img.unsqueeze(0).cuda()
-            latent = vae.encode(img, return_dict=False)[0]
+            with torch.cuda.amp.autocast(dtype=dtype):
+                latent = vae.encode(img, return_dict=False)[0]
             latent.deterministic = True
             latent = latent.sample()[0]
             d = f.create_dataset(
@@ -613,6 +614,8 @@ if __name__ == "__main__":
                 f.close()
                 current_file_index += 1
                 f, h5_cache_file = create_new_h5_file(opt, current_file_index, h5_file_list, rank)
+
+            torch.cuda.empty_cache()
 
     f.close() #  关闭最后一个 h5 文件
 
