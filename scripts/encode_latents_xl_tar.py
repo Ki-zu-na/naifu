@@ -347,7 +347,7 @@ class TarDataset(Dataset):
                         img_res.append(_img.size[::-1]) # 注意 PIL 返回 (width, height), 这里需要 (height, width)
             except Exception as e:
                 print(f"\033[31mError loading image size for {tar_info['filename']} from {tar_info['tar_path']}: {e}\033[0m")
-                img_res.append((512, 512)) # 错误时默认分辨率
+                img_res.append((1024, 1024)) # 错误时默认分辨率
 
         img_res = np.array(img_res)
         img_ratios = img_res[:, 0] / img_res[:, 1]
@@ -356,7 +356,7 @@ class TarDataset(Dataset):
 
         # Assign images to buckets
         for idx, img_ratio in enumerate(img_ratios):
-            diff = np.abs(self.bucket_ratios - img_ratio)
+            diff = np.abs(np.log(self.bucket_ratios) - np.log(img_ratio))
             bucket_idx = np.argmin(diff)
             self.bucket_content[bucket_idx].append(idx)
             self.to_ratio[idx] = self.bucket_ratios[bucket_idx]
