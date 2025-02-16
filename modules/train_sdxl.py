@@ -40,14 +40,10 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         ]
         logger.info(f"开始预缓存 Latent，缓存目录: {latent_cache_dir}")
         logger.info(f"执行命令: {' '.join(command)}")
-
-        # 执行脚本 (你需要确保你的环境可以执行这个命令)
-        import os, subprocess
-        env_without_distributed = os.environ.copy()
-        for var in ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"]:
-            env_without_distributed.pop(var, None)
-            
-        subprocess.run(command, check=True, env=env_without_distributed)
+        
+        import subprocess
+        subprocess.run(command, check=True)
+        logger.info(f"Latent 预缓存完成，缓存目录: {latent_cache_dir}")
 
         # 修改 dataset 配置，使其从 latent 缓存目录加载
         config.dataset.img_path = latent_cache_dir #  dataset 的 img_path 指向 latent 缓存目录
