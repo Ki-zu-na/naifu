@@ -535,7 +535,7 @@ if __name__ == "__main__":
         existing_h5_files.sort(key=get_index)
         current_h5_path = existing_h5_files[-1]
         h5_file_count = get_index(current_h5_path)
-        current_h5_file = h5.File(current_h5_path, "r+", libver="latest")
+        current_h5_file = h5.File(current_h5_path, "a", libver="latest")
         if current_h5_file.id.get_filesize() > max_h5_size:
             current_h5_file.close()
             h5_file_count += 1
