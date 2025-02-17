@@ -541,7 +541,10 @@ if __name__ == "__main__":
             h5_file_count += 1
             cache_filename = f"cache_{h5_file_count}.h5"
             print(f"Creating new cache file: {cache_filename} due to size limit.")
-            current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
+            if not (opt / cache_filename).exists(): 
+                current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
+            else:
+                current_h5_file = h5.File(opt / cache_filename, "r+", libver="latest")
         else:
             print(f"Appending to existing cache file: {current_h5_path}")
     else:
