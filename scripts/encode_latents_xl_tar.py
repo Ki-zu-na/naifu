@@ -513,7 +513,7 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers)
 
-    # Load or initialize dataset mapping from dataset.json for resume support
+    # 加载或初始化 dataset mapping 用于断点续传
     dataset_json_file = opt / "dataset.json"
     if dataset_json_file.exists():
         with open(dataset_json_file, "r") as f:
@@ -522,48 +522,16 @@ if __name__ == "__main__":
     else:
         dataset_mapping = {}
 
-    # Handle existing h5 cache files for resume support
+    # 使用单一 cache_full.h5 文件进行缓存
     max_h5_size = 40 * 1024 * 1024 * 1024  # 40GB maximum h5 file size
-    existing_h5_files = list(opt.glob("cache_*.h5"))
-    if existing_h5_files:
-        def get_index(p: Path):
-            try:
-                return int(p.stem.split('_')[-1])
-            except Exception:
-                return 0
+    cache_filename = "cache_full.h5"
+    h5_cache_file = opt / cache_filename
+    print(f"Saving cache to {h5_cache_file}")
+    file_mode = "w" if not h5_cache_file.exists() else "r+"
+    current_h5_file = h5.File(h5_cache_file, file_mode, libver="latest")
 
-        existing_h5_files.sort(key=get_index)
-        current_h5_path = existing_h5_files[-1]
-        h5_file_count = get_index(current_h5_path)
-        current_h5_file = h5.File(current_h5_path, "a", libver="latest")
-        if current_h5_file.id.get_filesize() > max_h5_size:
-            current_h5_file.close()
-            h5_file_count += 1
-            cache_filename = f"cache_{h5_file_count}.h5"
-            print(f"Creating new cache file: {cache_filename} due to size limit.")
-            if not (opt / cache_filename).exists(): 
-                current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
-            else:
-                current_h5_file = h5.File(opt / cache_filename, "r+", libver="latest")
-        else:
-            print(f"Appending to existing cache file: {current_h5_path}")
-    else:
-        h5_file_count = 1
-        cache_filename = f"cache_{h5_file_count}.h5"
-        print(f"Creating new cache file: {cache_filename}")
-        current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
-
-    def _create_new_h5_file():
-        """Helper function to create a new h5 file when size limit is exceeded."""
-        global h5_file_count, current_h5_file
-        if current_h5_file:
-            current_h5_file.close()
-        h5_file_count += 1
-        cache_filename = f"cache_{h5_file_count}.h5"
-        print(f"Creating new cache file: {cache_filename}")
-        current_h5_file = h5.File(opt / cache_filename, "w", libver="latest")
     count = 0
-    # Main processing loop
+    # 主处理循环
     for item in tqdm(dataloader):
         if use_tar:
             img, basepath, prompt, sha1, original_size, dhdw, extra = item
@@ -574,7 +542,6 @@ if __name__ == "__main__":
             print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
             continue
 
-        # Skip processing if already in mapping (resume support)
         if sha1 in dataset_mapping:
             count += 1
             continue
@@ -590,7 +557,6 @@ if __name__ == "__main__":
         if use_tar:
             dataset_mapping[sha1]["extra"] = extra
 
-        # Check if dataset already exists in current h5 file
         if f"{sha1}.latents" in current_h5_file:
             print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
             continue
@@ -600,10 +566,7 @@ if __name__ == "__main__":
         latent.deterministic = True
         latent = latent.sample()[0]
 
-        # Check current h5 file size, create new file if exceeded size limit
-        if current_h5_file.id.get_filesize() > max_h5_size:
-            _create_new_h5_file()
-
+        # 将 latent 直接写入 cache_full.h5 (移除了即时拆分逻辑)
         dset = current_h5_file.create_dataset(
             f"{sha1}.latents",
             data=latent.float().cpu().numpy(),
@@ -612,11 +575,41 @@ if __name__ == "__main__":
         dset.attrs["scale"] = False
         dset.attrs["dhdw"] = dhdw
 
-    # Close the current h5 file
     if current_h5_file:
         current_h5_file.close()
 
-    # Save updated dataset mapping to JSON, merging with existing mapping if present
     with open(dataset_json_file, "w") as f:
         json.dump(dataset_mapping, f, indent=4)
     print(f"Dataset processing complete. Total skipped existing images: {count}")
+
+    # 后处理：检查 cache_full.h5 是否超过 40GB，如超过则拆分为多个文件（每个最大 40GB）
+    cache_path = opt / cache_filename
+    cache_size = cache_path.stat().st_size
+    if cache_size > max_h5_size:
+        print(f"Cache file {cache_path} size {cache_size} exceeds 40GB. Splitting into multiple h5 files...")
+        with h5.File(cache_path, "r", libver="latest") as full_cache:
+            keys = list(full_cache.keys())
+            split_index = 1
+            current_split_size = 0
+            split_filename = f"cache_{split_index}.h5"
+            split_file_path = opt / split_filename
+            new_h5_file = h5.File(split_file_path, "w", libver="latest")
+            for key in keys:
+                dset = full_cache[key]
+                data = dset[...]
+                ds_size = data.nbytes  # 数据集大小（字节数）
+                
+                # 如果累计大小超过限制，则切换到新文件（确保当前文件至少已有一些数据）
+                if current_split_size + ds_size > max_h5_size and current_split_size > 0:
+                    new_h5_file.close()
+                    split_index += 1
+                    split_filename = f"cache_{split_index}.h5"
+                    split_file_path = opt / split_filename
+                    new_h5_file = h5.File(split_file_path, "w", libver="latest")
+                    current_split_size = 0
+                new_dset = new_h5_file.create_dataset(key, data=data, compression="gzip")
+                for attr_key, attr_val in dset.attrs.items():
+                    new_dset.attrs[attr_key] = attr_val
+                current_split_size += ds_size
+            new_h5_file.close()
+        print(f"Splitting complete. Generated {split_index} cache files.")
