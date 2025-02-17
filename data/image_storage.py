@@ -252,15 +252,29 @@ class LatentStore(StoreBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.latent_json_path = kwargs.get("latent_json", None)
+        json_files = []
         if self.latent_json_path:
-            # 从指定的 JSON 文件加载 latent 信息
             prompt_mapping_path = Path(self.latent_json_path)
             if not prompt_mapping_path.exists():
-                logger.warning (f"Latent JSON file not found: {self.latent_json_path}, use default latent json file")
-                prompt_mapping = next(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
+                logger.warning(
+                    f"Latent JSON file not found: {self.latent_json_path}, falling back to scanning entire directory for JSON files."
+                )
+                json_files = list(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
+            else:
+                json_files = [prompt_mapping_path]
         else:
-            prompt_mapping = next(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
-        prompt_mapping = json_lib.loads(Path(prompt_mapping).read_text())
+            json_files = list(dirwalk(self.root_path, lambda p: p.suffix == ".json"))
+        
+        prompt_mapping = {}
+        for json_file in json_files:
+            try:
+                current_mapping = json_lib.loads(json_file.read_text())
+                if isinstance(current_mapping, dict):
+                    prompt_mapping.update(current_mapping)
+                else:
+                    logger.warning(f"JSON file {json_file} does not contain a dictionary.")
+            except Exception as e:
+                logger.error(f"Error loading JSON file {json_file}: {e}")
 
         self.h5_paths = list(
             dirwalk(
