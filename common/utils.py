@@ -5,7 +5,6 @@ import safetensors.torch
 import torch.utils._device
 import argparse
 import sys
-
 from common.logging import logger
 from tqdm import tqdm
 
@@ -178,3 +177,4 @@ def get_latest_checkpoint(checkpoint_dir: str):
     if not items:
         return None
     return os.path.join(checkpoint_dir, items[-1])
+

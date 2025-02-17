@@ -9,6 +9,9 @@ from common.logging import logger
 from modules.sdxl_model import StableDiffusionModel
 from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
+from pathlib import Path
+import subprocess
+import torch.distributed as dist
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
@@ -217,5 +220,5 @@ class SupervisedFineTune(StableDiffusionModel):
             logger.warning("Warning: NaN or Inf loss encountered, skipping this batch.")
             # 返回一个零 loss, 这样梯度更新不会改变模型参数
             return torch.tensor(0.0, device=loss.device, requires_grad=True)
-
+        
         return loss
