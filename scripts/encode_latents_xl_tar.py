@@ -575,7 +575,8 @@ if __name__ == "__main__":
 
 
                 if f"{sha1}.latents" in F:
-                    print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
+                    count += 1
+                    #print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
                     continue
 
                 img = img.unsqueeze(0).cuda()
