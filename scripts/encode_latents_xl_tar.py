@@ -573,23 +573,23 @@ if __name__ == "__main__":
         if use_tar:
             dataset_mapping[sha1]["extra"] = extra
 
-        if f"{sha1}.latents" in current_h5_file:
-            print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
-            continue
+        with h5.File(h5_cache_file, "a", libver="latest") as current_h5_file:
+            if f"{sha1}.latents" in current_h5_file:
+                print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
+                continue
 
-        img = img.unsqueeze(0).cuda()
-        latent = vae.encode(img, return_dict=False)[0]
-        latent.deterministic = True
-        latent = latent.sample()[0]
+            img = img.unsqueeze(0).cuda()
+            latent = vae.encode(img, return_dict=False)[0]
+            latent.deterministic = True
+            latent = latent.sample()[0]
 
-        # 将 latent 直接写入 cache_full.h5 (移除了即时拆分逻辑)
-        dset = current_h5_file.create_dataset(
-            f"{sha1}.latents",
-            data=latent.float().cpu().numpy(),
-            compression="gzip",
-        )
-        dset.attrs["scale"] = False
-        dset.attrs["dhdw"] = dhdw
+            dset = current_h5_file.create_dataset(
+                f"{sha1}.latents",
+                data=latent.float().cpu().numpy(),
+                compression="gzip",
+            )
+            dset.attrs["scale"] = False
+            dset.attrs["dhdw"] = dhdw
 
     if current_h5_file:
         current_h5_file.close()
