@@ -369,7 +369,7 @@ class TarDataset(Dataset):
                         _img = Image.open(fileobj)  # 从内存文件对象中打开图像
                         width, height = _img.size
                         # 新增过滤低分辨率，低于 512x512 的图像直接跳过
-                        if width < 512 or height < 512:
+                        if width * height < 512 * 512:
                             print(f"\033[33mSkipped image due to low resolution {width}x{height}: {tar_info['filename']} from {tar_info['tar_path']}\033[0m")
                             continue
                         img_res.append((height, width))  # 统一存储为 (h, w)
