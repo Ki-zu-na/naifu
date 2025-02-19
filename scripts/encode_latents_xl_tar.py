@@ -544,55 +544,53 @@ if __name__ == "__main__":
     h5_cache_file = opt / cache_filename
     print(f"Saving cache to {h5_cache_file}")
     file_mode = "w" if not h5_cache_file.exists() else "r+"
-    current_h5_file = h5.File(h5_cache_file, file_mode, libver="latest")
 
     count = 0
-    # 主处理循环
-    for item in tqdm(dataloader):
-        if use_tar:
-            img, basepath, prompt, sha1, original_size, dhdw, extra = item
-        else:
-            img, basepath, prompt, sha1, original_size, dhdw = item
+    with h5.File(h5_cache_file, file_mode, libver="latest") as F:
+        with torch.no_grad():
+            for item in tqdm(dataloader):
+                if use_tar:
+                    img, basepath, prompt, sha1, original_size, dhdw, extra = item
+                else:
+                    img, basepath, prompt, sha1, original_size, dhdw = item
 
-        if sha1 is None:
-            print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
-            continue
+                if sha1 is None:
+                    print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
+                    continue
 
-        if sha1 in dataset_mapping:
-            count += 1
-            continue
+                if sha1 in dataset_mapping:
+                    count += 1
+                    continue
 
-        h, w = original_size
-        dataset_mapping[sha1] = {
-            "train_use": True if prompt else False,
-            "train_caption": prompt,
-            "file_path": str(basepath),
-            "train_width": w,
-            "train_height": h,
-        }
-        if use_tar:
-            dataset_mapping[sha1]["extra"] = extra
+                h, w = original_size
+                dataset_mapping[sha1] = {
+                    "train_use": True if prompt else False,
+                    "train_caption": prompt,
+                    "file_path": str(basepath),
+                    "train_width": w,
+                    "train_height": h,
+                }
+                if use_tar:
+                    dataset_mapping[sha1]["extra"] = extra
 
-        with h5.File(h5_cache_file, "a", libver="latest") as current_h5_file:
-            if f"{sha1}.latents" in current_h5_file:
-                print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
-                continue
 
-            img = img.unsqueeze(0).cuda()
-            latent = vae.encode(img, return_dict=False)[0]
-            latent.deterministic = True
-            latent = latent.sample()[0]
+                if f"{sha1}.latents" in F:
+                    print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
+                    continue
 
-            dset = current_h5_file.create_dataset(
-                f"{sha1}.latents",
-                data=latent.float().cpu().numpy(),
-                compression="gzip",
-            )
-            dset.attrs["scale"] = False
-            dset.attrs["dhdw"] = dhdw
+                img = img.unsqueeze(0).cuda()
+                latent = vae.encode(img, return_dict=False)[0]
+                latent.deterministic = True
+                latent = latent.sample()[0]
 
-    if current_h5_file:
-        current_h5_file.close()
+                dset = F.create_dataset(
+                    f"{sha1}.latents",
+                    data=latent.float().cpu().numpy(),
+                    compression="gzip",
+                )
+                dset.attrs["scale"] = False
+                dset.attrs["dhdw"] = dhdw
+
 
     with open(dataset_json_file, "w") as f:
         json.dump(dataset_mapping, f, indent=4)
