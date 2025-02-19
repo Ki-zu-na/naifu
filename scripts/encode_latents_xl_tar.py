@@ -71,6 +71,11 @@ class LatentEncodingDataset(Dataset):
         ):
             try:
                 w, h = Image.open(p).size
+                # 过滤条件：较小边小于 256 或 较大边小于 512 则跳过
+                if min(w, h) < 256 or max(w, h) < 512:
+                    print(f"\033[33mSkipped image due to low resolution {w}x{h}: {p}\033[0m")
+                    remove_paths.append(p)
+                    continue
                 self.raw_res.append((h, w))
             except Exception as e:
                 print(f"\033[33mSkipped: error processing {p}: {e}\033[0m")
@@ -351,28 +356,39 @@ class TarDataset(Dataset):
         }
 
     def assign_buckets(self):
+        valid_image_entries = []
         img_res = []
         for sha256 in self.image_entries:
+            tar_info = self.image_metadatas[sha256]
             try:
-                tar_info = self.image_metadatas[sha256]
                 with tarfile.open(tar_info["tar_path"], 'r') as tar:
-                    with tar.fileobj as tar_fileobj: #  使用 tar_fileobj
-                        tar_fileobj.seek(tar_info["offset"]) #  使用 offset 定位
-                        image_data = tar_fileobj.read(tar_info["size"]) #  读取 size 大小的数据
-                        fileobj = io.BytesIO(image_data) #  使用 io.BytesIO 将数据转换为文件对象
-                        _img = Image.open(fileobj) # 从内存文件对象中打开图像
-                        img_res.append(_img.size[::-1]) # 注意 PIL 返回 (width, height), 这里需要 (height, width)
+                    with tar.fileobj as tar_fileobj:  # 使用 tar_fileobj
+                        tar_fileobj.seek(tar_info["offset"])  # 使用 offset 定位
+                        image_data = tar_fileobj.read(tar_info["size"])  # 读取 size 大小的数据
+                        fileobj = io.BytesIO(image_data)  # 将数据转换为文件对象
+                        _img = Image.open(fileobj)  # 从内存文件对象中打开图像
+                        width, height = _img.size
+                        # 新增过滤低分辨率，低于 512x512 的图像直接跳过
+                        if width < 512 or height < 512:
+                            print(f"\033[33mSkipped image due to low resolution {width}x{height}: {tar_info['filename']} from {tar_info['tar_path']}\033[0m")
+                            continue
+                        img_res.append((height, width))  # 统一存储为 (h, w)
+                        valid_image_entries.append(sha256)
             except Exception as e:
                 print(f"\033[31mError loading image size for {tar_info['filename']} from {tar_info['tar_path']}: {e}\033[0m")
-                img_res.append((1536, 1536)) # 错误时默认分辨率
-
-        img_res = np.array(img_res)
-        img_ratios = img_res[:, 0] / img_res[:, 1]
+                continue
+        self.image_entries = valid_image_entries
+        if len(img_res) == 0:
+            print("\033[31mNo valid images found after filtering by resolution.\033[0m")
+            img_res = np.array([])
+        else:
+            img_res = np.array(img_res)
+        
         self.bucket_content = [[] for _ in range(len(self.buckets_sizes))]
         self.to_ratio = {}
 
         # Assign images to buckets
-        for idx, img_ratio in enumerate(img_ratios):
+        for idx, img_ratio in enumerate(img_res[:, 0] / img_res[:, 1]):
             diff = np.abs(self.bucket_ratios - img_ratio)
             bucket_idx = np.argmin(diff)
             self.bucket_content[bucket_idx].append(idx)
