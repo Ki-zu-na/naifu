@@ -206,7 +206,13 @@ def process_prompts_with_metadata(
     flex_tags = []
     caption_nl = random.random() < caption_nl_prob
     style_mix = random.random() < style_mix_prob
-    if 'tag_string_general' in extras and extras['tag_string_general'] and not caption_nl:
+    
+    # 检查是否有tag_string_general或caption摘要
+    has_general_tags = 'tag_string_general' in extras and extras['tag_string_general']
+    has_regular_summary = 'regular_summary' in extras and extras['regular_summary']
+    has_brief_summary = 'brief_summary' in extras and extras['brief_summary']
+    
+    if has_general_tags and not caption_nl:
         flex_tags = [t.strip() for t in extras['tag_string_general'].split(",") if t.strip()]
         if  'rating' in extras and extras['rating']:
             rating_tags = []
@@ -243,6 +249,12 @@ def process_prompts_with_metadata(
         elif 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
             flex_tags = [extras['brief_summary']]
 
+    elif (has_regular_summary or has_brief_summary) and caption_nl:
+        if 'train_caption' in extras and extras['train_caption']:
+            flex_tags = [extras['train_caption']]
+        else:
+            flex_tags = [] # 如果train_caption也不存在，则使用空列表
+
     else:
         flex_tags = [] # 处理 tag_string_general 缺失的情况，虽然按理说应该存在。
 
@@ -258,8 +270,10 @@ def process_prompts_with_metadata(
     
     if shuffle_caption:
         random.shuffle(fixed_tags)
-
-    new_prompt = ", ".join(fixed_tags + flex_tags)
+    if (has_general_tags or has_regular_summary or has_brief_summary):
+        new_prompt = ", ".join(fixed_tags + flex_tags)
+    else:
+        new_prompt = ", ".join(flex_tags)
     new_prompt = new_prompt.replace("_", " ") # 将下划线替换成空格
 
     return Entry(
