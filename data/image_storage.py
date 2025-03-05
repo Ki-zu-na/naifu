@@ -271,6 +271,7 @@ class LatentStore(StoreBase):
                 current_mapping = json_lib.loads(json_file.read_text())
                 if isinstance(current_mapping, dict):
                     prompt_mapping.update(current_mapping)
+                    logger.info(f"JSON file {json_file} has been merged.")
                 else:
                     logger.warning(f"JSON file {json_file} does not contain a dictionary.")
             except Exception as e:
