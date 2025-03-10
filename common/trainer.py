@@ -153,13 +153,19 @@ class Trainer:
                     logger.info(f"Removed old state file: {state_path}")
         
         if not save_weights_only:
+            # 检查模型是否有tag_loss_module属性
+            tag_loss_state = None
+            if hasattr(self.model, "tag_loss_module"):
+                tag_loss_state = self.model.tag_loss_module.get_state_dict()
+                logger.info(f"保存TagLoss状态: {len(tag_loss_state['tag_counter'])}个标签计数")
+            
             state = {
                 "model": self.model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "scheduler": self.scheduler.state_dict() if self.scheduler else None,
                 "global_step": self.global_step,
                 "current_epoch": self.current_epoch,
-
+                "tag_loss_state": tag_loss_state,  # 添加TagLoss状态
             }
             self.fabric.save(model_path + "_state.pt", state)
             logger.info(f"Saving model state to {model_path}_state.pt")
@@ -284,6 +290,25 @@ class Trainer:
                 torch.cuda.empty_cache()
                 gc.collect()
                 torch.cuda.memory_summary(device=None, abbreviated=False)
+
+                # 尝试加载TagLoss状态
+                tag_loss_loaded = False
+                
+                # 检查是否有_state.pt文件
+                state_path = latest_ckpt.replace(".ckpt", "_state.pt")
+                if os.path.exists(state_path):
+                    try:
+                        state_dict = torch.load(state_path, map_location="cpu")
+                        tag_loss_state = state_dict.get("tag_loss_state", None)
+                        
+                        if tag_loss_state and hasattr(self.model, "tag_loss_module"):
+                            tag_loss_loaded = self.model.tag_loss_module.load_state_dict(tag_loss_state)
+                            logger.info(f"从{state_path}加载TagLoss状态")
+                    except Exception as e:
+                        logger.warning(f"加载TagLoss状态时出错: {e}")
+                
+                if not tag_loss_loaded and hasattr(self.model, "tag_loss_module"):
+                    logger.warning("未能加载TagLoss状态，将使用初始状态")
             else:
                 # 当没有找到 latest_ckpt 时，尝试从 model_path 中提取信息
                 model_path = cfg.get("model_path", "")

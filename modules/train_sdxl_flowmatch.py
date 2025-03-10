@@ -105,7 +105,7 @@ class SupervisedFineTune(StableDiffusionModel):
             from modules.losses.tag_loss import TagLossModule
             
             def is_special_tag(tag: str) -> bool:
-                return tag.startswith(("artist:", "character:", "rating:"))
+                return tag.startswith(("artist:", "character:", "rating:", "style:", "copyright:","year "))
             
             self.tag_loss_module = TagLossModule(
                 check_fn=is_special_tag,
@@ -159,44 +159,33 @@ class SupervisedFineTune(StableDiffusionModel):
         
         # 应用tag loss
         if hasattr(self, "tag_loss_module"):
-            # 更新全局步数
             self.tag_loss_module.global_step = self.global_step
-            
-            # 计算权重并应用
             weights = self.tag_loss_module.calculate_loss_weights(
-                batch["prompts"],  # 假设prompt在batch中
+                batch["prompts"],
                 base_loss.detach()
             )
-            
-            # 增加更详细的日志记录
+
             if hasattr(self, "log_dict"):
-                self.log_dict({
+                log_dict = {
                     "train/tag_loss_weight": weights.mean().item(),
                     "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
-                    "train/min_weight": weights.min().item()
-                })
-                
-                # 记录特殊标签的数量
-                special_tags_count = sum(1 for prompt in batch["prompts"] 
-                                      for tag in prompt.split(",") 
-                                      if self.tag_loss_module.check_fn(tag.strip()))
-                self.log_dict({
-                    "train/special_tags_count": special_tags_count
-                })
-            
-            # 存储metrics供trainer使用
-            self.tag_loss_metrics = {
-                "train/tag_loss_weight": weights.mean().item(),
-                "train/weighted_loss": (base_loss * weights).mean().item(),
-                "train/max_weight": weights.max().item(),
-                "train/min_weight": weights.min().item(),
-                "train/special_tags_count": sum(1 for prompt in batch["prompts"] 
-                                              for tag in prompt.split(",") 
-                                              if self.tag_loss_module.check_fn(tag.strip()))
-            }
-            
-            return (base_loss * weights).mean()
+                    "train/min_weight": weights.min().item(),
+                    "train/special_tags_count": sum(1 for prompt in batch["prompts"]
+                                                    for tag in prompt.split(",")
+                                                    if self.tag_loss_module.check_fn(tag.strip()))
+                }
+                self.log_dict(log_dict)
+                self.tag_loss_metrics = log_dict # 存储metrics供trainer使用
+
+            loss = (base_loss * weights).mean()
+        else:
+            loss = base_loss.mean()
+
+        if torch.isnan(loss).any() or torch.isinf(loss).any():
+            logger.warning("Warning: NaN or Inf loss encountered, skipping this batch.")
+            # 返回一个零 loss, 这样梯度更新不会改变模型参数
+            return torch.tensor(0.0, device=loss.device, requires_grad=True)
         
         return base_loss.mean()
 

@@ -106,18 +106,18 @@ class SupervisedFineTune(StableDiffusionModel):
         super().__init__(model_path, config, device)
         
         # 初始化tag loss模块
-        if config.advanced.get("use_tag_loss", False):
+        if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
             
             def is_special_tag(tag: str) -> bool:
-                return tag.startswith(("artist:", "character:", "style:", "rating:", "copyright:"))
+                return tag.startswith(("artist:", "character:", "rating:", "style:", "copyright:","year "))
             
             self.tag_loss_module = TagLossModule(
                 check_fn=is_special_tag,
-                alpha=config.advanced.get("tag_loss_alpha", 0.2),
-                beta=config.advanced.get("tag_loss_beta", 0.99),
-                strength=config.advanced.get("tag_loss_strength", 1.0),
-                tag_rewards=config.advanced.get("tag_rewards", {})
+                alpha=self.config.advanced.get("tag_loss_alpha", 0.2),
+                beta=self.config.advanced.get("tag_loss_beta", 0.99),
+                strength=self.config.advanced.get("tag_loss_strength", 1.0),
+                tag_rewards=self.config.advanced.get("tag_rewards", {})
             )
 
     def forward(self, batch):
