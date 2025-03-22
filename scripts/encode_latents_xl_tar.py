@@ -9,6 +9,10 @@ import numpy as np
 import torch
 import tarfile  # 导入 tarfile 模块
 import io # 导入 io 模块
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 
 from pathlib import Path
 from PIL import Image
@@ -490,72 +494,86 @@ class TarDataset(Dataset):
         return len(self.image_entries)
 
 
+def setup(rank, world_size):
+    """初始化DDP进程组"""
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+def cleanup():
+    """清理DDP进程组"""
+    dist.destroy_process_group()
+
 def get_args():
-    parser = argparse.ArgumentParser(description="预处理图像并编码潜在表示，支持目录或 tar 文件输入。") #  更详细的描述 (中文)
+    parser = argparse.ArgumentParser(description="预处理图像并编码潜在表示，支持目录或 tar 文件输入。") 
     parser.add_argument(
-        "--input", "-i", type=str, required=True, help="图像的根目录或 tar 文件。" #  修改 help 描述 (中文)
+        "--input", "-i", type=str, required=True, help="图像的根目录或 tar 文件。" 
     )
-    parser.add_argument("--output", "-o", type=str, required=True, help="保存缓存文件和 dataset.json 的输出目录。") #  更清晰的描述 output (中文)
-    parser.add_argument("--no-upscale", "-nu", action="store_true", help="调整大小期间不放大图像。") #  更清晰的 help (中文)
-    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="潜在表示的数据类型 (float32 或 bfloat16)。") #  更清晰的 help 和可选值 (中文)
-    parser.add_argument("--num_workers", "-n", type=int, default=6, help="数据加载器 worker 数量。") #  更清晰的 help (中文)
-    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="存储包含图片 prompt 和 extra 信息的 JSON 文件路径 (可选)。") #  用于存储包含图片prompt和extra的的json (中文)
-    parser.add_argument("--use_tar", "-ut", action="store_true", help="启用 tar 文件处理。如果输入是目录并且设置了此标志，则将在目录中搜索并处理 .tar 文件。") #  更详细的 use_tar help (中文)
-    args = parser.parse_args()
-    return args
+    parser.add_argument("--output", "-o", type=str, required=True, help="保存缓存文件和 dataset.json 的输出目录。") 
+    parser.add_argument("--no-upscale", "-nu", action="store_true", help="调整大小期间不放大图像。") 
+    parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="潜在表示的数据类型 (float32 或 bfloat16)。")
+    parser.add_argument("--num_workers", "-n", type=int, default=6, help="数据加载器 worker 数量。")
+    parser.add_argument("--metadata_json_path", "-metadata", type=str, default=None, help="存储包含图片 prompt 和 extra 信息的 JSON 文件路径 (可选)。") 
+    parser.add_argument("--use_tar", "-ut", action="store_true", help="启用 tar 文件处理。如果输入是目录并且设置了此标志，则将在目录中搜索并处理 .tar 文件。") 
+    parser.add_argument("--local_rank", type=int, default=-1, help="DDP local rank")
+    parser.add_argument("--world_size", type=int, default=-1, help="总GPU数量")
+    return parser.parse_args()
 
-
-if __name__ == "__main__":
-    args = get_args()
-    root = args.input
+def process_fn(rank, world_size, args):
+    """每个GPU进程的主要处理函数"""
+    setup(rank, world_size)
+    
+    # 设置当前设备
+    torch.cuda.set_device(rank)
+    
     opt = Path(args.output)
     opt.mkdir(exist_ok=True, parents=True)
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
-    num_workers = args.num_workers
-    use_tar = args.use_tar
-    metadata_json_path = args.metadata_json_path
     
-    vae_path = "stabilityai/sdxl-vae"
-    vae = AutoencoderKL.from_pretrained(vae_path).to(dtype=dtype)
+    # VAE模型加载到对应GPU
+    vae = AutoencoderKL.from_pretrained(args.vae_path).to(dtype=dtype, device=rank)
     vae.requires_grad_(False)
-    vae.eval().cuda()
+    vae.eval()
 
-    if use_tar:
-        if not metadata_json_path:
-            raise ValueError("--metadata_json_path must be specified when using --use_tar")
-        dataset = TarDataset(root, metadata_json_path, dtype=dtype, no_upscale=args.no_upscale)
+    # 创建数据集
+    if args.use_tar:
+        dataset = TarDataset(args.input, args.metadata_json_path, dtype=dtype, no_upscale=args.no_upscale)
     else:
-        dataset = LatentEncodingDataset(root, dtype=dtype, no_upscale=args.no_upscale)
+        dataset = LatentEncodingDataset(args.input, dtype=dtype, no_upscale=args.no_upscale)
 
-    dataloader = DataLoader(dataset, batch_size=None, num_workers=num_workers)
+    # 使用DistributedSampler进行数据分片
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=None,
+        num_workers=args.num_workers,
+        sampler=sampler
+    )
 
-    # 加载或初始化 dataset mapping 用于断点续传
-    dataset_json_file = opt / "dataset.json"
+    # 为每个进程创建独立的cache文件
+    cache_filename = f"cache_rank_{rank}.h5"
+    h5_cache_file = opt / cache_filename
+    
+    # 加载或初始化dataset mapping
+    dataset_json_file = opt / f"dataset_rank_{rank}.json"
     if dataset_json_file.exists():
         with open(dataset_json_file, "r") as f:
             dataset_mapping = json.load(f)
-        print(f"Loaded {len(dataset_mapping)} entries from existing dataset mapping.")
     else:
         dataset_mapping = {}
 
-    # 使用单一 cache_full.h5 文件进行缓存
-    max_h5_size = 40 * 1024 * 1024 * 1024  # 40GB maximum h5 file size
-    cache_filename = "cache_full.h5"
-    h5_cache_file = opt / cache_filename
-    print(f"Saving cache to {h5_cache_file}")
     file_mode = "w" if not h5_cache_file.exists() else "r+"
-
     count = 0
+
     with h5.File(h5_cache_file, file_mode, libver="latest") as F:
         with torch.no_grad():
-            for item in tqdm(dataloader):
-                if use_tar:
+            for item in tqdm(dataloader, disable=rank != 0):
+                if args.use_tar:
                     img, basepath, prompt, sha1, original_size, dhdw, extra = item
                 else:
                     img, basepath, prompt, sha1, original_size, dhdw = item
 
                 if sha1 is None:
-                    print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
+                    if rank == 0:
+                        print(f"\033[33mWarning: {basepath} is invalid. Skipping...\033[0m")
                     continue
 
                 if sha1 in dataset_mapping:
@@ -570,7 +588,7 @@ if __name__ == "__main__":
                     "train_width": w,
                     "train_height": h,
                 }
-                if use_tar:
+                if args.use_tar:
                     dataset_mapping[sha1]["extra"] = extra
 
 
@@ -579,7 +597,7 @@ if __name__ == "__main__":
                     #print(f"\033[33mWarning: {str(basepath)} is already cached in h5. Skipping...\033[0m")
                     continue
 
-                img = img.unsqueeze(0).cuda()
+                img = img.unsqueeze(0).cuda(rank)
                 latent = vae.encode(img, return_dict=False)[0]
                 latent.deterministic = True
                 latent = latent.sample()[0]
@@ -593,38 +611,44 @@ if __name__ == "__main__":
                 dset.attrs["dhdw"] = dhdw
 
 
+    # 保存当前进程的mapping
     with open(dataset_json_file, "w") as f:
         json.dump(dataset_mapping, f, indent=4)
-    print(f"Dataset processing complete. Total skipped existing images: {count}")
 
-    # 后处理：检查 cache_full.h5 是否超过 40GB，如超过则拆分为多个文件（每个最大 40GB）
-    cache_path = opt / cache_filename
-    cache_size = cache_path.stat().st_size
-    if cache_size > max_h5_size:
-        print(f"Cache file {cache_path} size {cache_size} exceeds 40GB. Splitting into multiple h5 files...")
-        with h5.File(cache_path, "r", libver="latest") as full_cache:
-            keys = list(full_cache.keys())
-            split_index = 1
-            current_split_size = 0
-            split_filename = f"cache_{split_index}.h5"
-            split_file_path = opt / split_filename
-            new_h5_file = h5.File(split_file_path, "w", libver="latest")
-            for key in keys:
-                dset = full_cache[key]
-                data = dset[...]
-                ds_size = data.nbytes  # 数据集大小（字节数）
-                
-                # 如果累计大小超过限制，则切换到新文件（确保当前文件至少已有一些数据）
-                if current_split_size + ds_size > max_h5_size and current_split_size > 0:
-                    new_h5_file.close()
-                    split_index += 1
-                    split_filename = f"cache_{split_index}.h5"
-                    split_file_path = opt / split_filename
-                    new_h5_file = h5.File(split_file_path, "w", libver="latest")
-                    current_split_size = 0
-                new_dset = new_h5_file.create_dataset(key, data=data, compression="gzip")
-                for attr_key, attr_val in dset.attrs.items():
-                    new_dset.attrs[attr_key] = attr_val
-                current_split_size += ds_size
-            new_h5_file.close()
-        print(f"Splitting complete. Generated {split_index} cache files.")
+    # 等待所有进程完成
+    dist.barrier()
+
+    # 只在rank 0进程中合并所有mapping和cache文件
+    if rank == 0:
+        merge_results(opt, world_size)
+
+    cleanup()
+
+def merge_results(opt: Path, world_size: int):
+    """合并所有进程的结果"""
+    # 合并dataset mappings
+    final_mapping = {}
+    for rank in range(world_size):
+        with open(opt / f"dataset_rank_{rank}.json", "r") as f:
+            rank_mapping = json.load(f)
+            final_mapping.update(rank_mapping)
+
+    # 保存最终的mapping
+    with open(opt / "dataset.json", "w") as f:
+        json.dump(final_mapping, f, indent=4)
+
+    # 合并h5文件
+    with h5.File(opt / "cache_full.h5", "w", libver="latest") as merged_f:
+        for rank in range(world_size):
+            with h5.File(opt / f"cache_rank_{rank}.h5", "r", libver="latest") as rank_f:
+                for key in rank_f.keys():
+                    rank_f.copy(key, merged_f)
+
+if __name__ == "__main__":
+    args = get_args()
+    
+    if args.local_rank != -1:  # DDP模式
+        world_size = args.world_size if args.world_size != -1 else torch.cuda.device_count()
+        process_fn(args.local_rank, world_size, args)
+    else:  # 单GPU模式
+        process_fn(0, 1, args)

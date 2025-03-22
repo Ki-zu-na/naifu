@@ -442,24 +442,6 @@ class Trainer:
 
             self.on_post_training_batch(is_last=True)
 
-            if self.global_step % 100 == 0:
-                # 获取deepspeed性能统计
-                if hasattr(self.fabric.strategy, "deepspeed_engine"):
-                    ds_engine = self.fabric.strategy.deepspeed_engine
-                    perf_stats = ds_engine.wall_clock_breakdown()
-                    
-                    # 准备要记录的指标
-                    metrics = {
-                        "deepspeed/step_time": perf_stats.get("step_time", 0),
-                        "deepspeed/forward_time": perf_stats.get("forward_time", 0),
-                        "deepspeed/backward_time": perf_stats.get("backward_time", 0),
-                        "deepspeed/optimizer_time": perf_stats.get("optimizer_time", 0),
-                        "deepspeed/communication_time": perf_stats.get("communication_time", 0)
-                    }
-                    
-                    # 记录到wandb
-                    if self.fabric.logger:
-                        self.fabric.log_dict(metrics=metrics, step=self.global_step)
 
         torch.cuda.empty_cache()
         gc.collect()
