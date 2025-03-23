@@ -5,6 +5,7 @@ import lightning as pl
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
+from diffusers import  FlowMatchEulerDiscreteScheduler
 from modules.sdxl_model import StableDiffusionModel
 from lightning.pytorch.utilities.model_summary import ModelSummary
 
@@ -143,7 +144,10 @@ class SupervisedFineTune(StableDiffusionModel):
         timesteps = timesteps.to(device=latents.device) 
         
         sigmas = get_sigmas(
-            self.noise_scheduler, 
+            FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=3.0,
+            ), 
             timesteps, 
             n_dim=latents.ndim, 
             dtype=latents.dtype, 
