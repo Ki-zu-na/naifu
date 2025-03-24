@@ -188,5 +188,6 @@ class SupervisedFineTune(StableDiffusionModel):
             # 返回一个零 loss, 这样梯度更新不会改变模型参数
             return torch.tensor(0.0, device=loss.device, requires_grad=True)
         
-        return base_loss.mean()
+        return loss
+
 
