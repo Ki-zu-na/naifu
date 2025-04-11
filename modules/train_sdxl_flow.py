@@ -111,6 +111,7 @@ class SupervisedFineTune(StableDiffusionModel):
             )
 
     def forward(self, batch):
+        advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
             self.first_stage_model.to(self.target_device)
             latents = self.encode_first_stage(batch["pixels"].to(self.first_stage_model.dtype))
@@ -128,7 +129,7 @@ class SupervisedFineTune(StableDiffusionModel):
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
         sigmas = torch.sigmoid(torch.randn((bsz,), device=self.target_device))
-        shift = 2.0
+        shift = advanced.get("flow_shift", 2.0)
         sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
         timesteps = (sigmas * 1000.0)
         sigmas = sigmas.view(-1, 1, 1, 1)
