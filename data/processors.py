@@ -186,15 +186,7 @@ def process_prompts_with_metadata(
 
         if shuffle_caption:
             random.shuffle(train_caption_tags) # 打乱tags
-
-        train_caption_tags = dropout_tags(train_caption_tags, dropout_rate) # 随机丢弃部分tags
-
-        drop_all_tags_prob = 0.1 # 定义丢弃所有tags的概率
-        if random.random() < drop_all_tags_prob:
-            new_prompt = "" # 随机丢弃全部tags
-        else:
-            new_prompt = ", ".join(train_caption_tags) # 将处理后的tags重新组合成prompt
-
+        new_prompt = ", ".join(train_caption_tags)
         data_entry.prompt = new_prompt
         return data_entry
 
