@@ -170,15 +170,32 @@ def process_prompts_with_metadata(
 
     shuffle_caption = True
     # New parameters for dropping all tags before or after keep_tokens_separator
-    drop_all_fixed_prob = 0.05  # Probability to drop all fixed tokens
-    drop_all_flex_prob = 0.15    # Probability to drop all flex tokens
+    drop_all_fixed_prob = 0.1  # Probability to drop all fixed tokens
+    drop_all_flex_prob = 0.2    # Probability to drop all flex tokens
     drop_artist_prob = 0.05
-    dropout_rate = 0.15
+    dropout_rate = 0.3
     caption_nl_prob = 0.5
     style_mix_prob = 0.5
     add_fixed_prefix_prob = 0.3
+    add_underline_prob = 0.1
 
     if not data_entry.extras:
+        train_caption = data_entry.prompt
+        train_caption = train_caption.replace("_", " ")
+        train_caption_tags = [tag.strip() for tag in train_caption.split(",") if tag.strip()] # 将caption分割成tags
+
+        if shuffle_caption:
+            random.shuffle(train_caption_tags) # 打乱tags
+
+        train_caption_tags = dropout_tags(train_caption_tags, dropout_rate) # 随机丢弃部分tags
+
+        drop_all_tags_prob = 0.1 # 定义丢弃所有tags的概率
+        if random.random() < drop_all_tags_prob:
+            new_prompt = "" # 随机丢弃全部tags
+        else:
+            new_prompt = ", ".join(train_caption_tags) # 将处理后的tags重新组合成prompt
+
+        data_entry.prompt = new_prompt
         return data_entry
 
     extras = data_entry.extras
@@ -193,6 +210,14 @@ def process_prompts_with_metadata(
         if random.random() < add_fixed_prefix_prob:
             return [f"{prefix}:{tag}" for tag in tags]
         return tags
+    def add_underline_to_tags(tags_list):
+        updated_fixed_tags = []
+        for tag in tags_list:
+            if ' ' in tag and random.random() < add_underline_prob: # 检查 tag 中是否含有空格，并以一定概率进行替换
+                updated_fixed_tags.append(tag.replace(' ', '_')) # 将空格替换为下划线
+            else:
+                updated_fixed_tags.append(tag) # 保留原 tag
+        return updated_fixed_tags # 更新 fixed_tags 列表
 
     if 'tag_string_artist' in extras and extras['tag_string_artist'] and not drop_artist:
         fixed_tags.extend(add_prefix_to_tags(extras['tag_string_artist'], "artist"))
@@ -202,6 +227,8 @@ def process_prompts_with_metadata(
         copyright_tags = add_prefix_to_tags(extras['tag_string_copyright'], "copyright")
         copyright_tags = [tag for tag in copyright_tags if "original" not in tag]
         fixed_tags.extend(copyright_tags)
+
+    fixed_tags = add_underline_to_tags(fixed_tags)
 
     flex_tags = []
     caption_nl = random.random() < caption_nl_prob
@@ -224,7 +251,7 @@ def process_prompts_with_metadata(
             elif rating == 'q':
                 rating_tags = ["nsfw"] 
             elif rating == 'g':
-                rating_tags = ["safe"]
+                rating_tags = ["general"]
             flex_tags.extend(add_prefix_to_tags(", ".join(rating_tags), "rating")) # rating 作为一个整体添加前缀
         if 'aes_rating' in extras and extras['aes_rating']:
             flex_tags.append(extras['aes_rating'])
@@ -238,6 +265,7 @@ def process_prompts_with_metadata(
         if shuffle_caption:
             random.shuffle(flex_tags)
         flex_tags = dropout_tags(flex_tags, dropout_rate)
+        flex_tags = add_underline_to_tags(flex_tags)
 
         if 'regular_summary' in extras and extras['regular_summary'] and 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
             if style_mix:
@@ -274,7 +302,6 @@ def process_prompts_with_metadata(
         new_prompt = ", ".join(fixed_tags + flex_tags)
     else:
         new_prompt = ", ".join(flex_tags)
-    new_prompt = new_prompt.replace("_", " ") # 将下划线替换成空格
 
     return Entry(
         is_latent=data_entry.is_latent,
