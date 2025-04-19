@@ -498,7 +498,7 @@ def get_args():
         "--input", "-i", type=str, required=True, help="图像的根目录或包含 tar 文件的目录。" # Clarified help text
     )
     parser.add_argument("--output", "-o", type=str, required=True, help="保存缓存文件和 dataset.json 的输出目录。")
-    parser.add_argument("--vae_path", type=str, required=True, help="预训练 VAE 模型的路径或 huggingface repo id。") # Added VAE path argument
+    parser.add_argument("--vae_path", type=str, default="stabilityai/sdxl-vae", help="预训练 VAE 模型的路径或 huggingface repo id。") # Added VAE path argument
     parser.add_argument("--no-upscale", "-nu", action="store_true", help="调整大小期间不放大图像。")
     parser.add_argument("--dtype", "-d", type=str, default="bfloat16", help="潜在表示的数据类型 (float32 或 bfloat16)。")
     parser.add_argument("--num_workers", "-n", type=int, default=6, help="数据加载器 worker 数量。")
