@@ -164,9 +164,9 @@ class SupervisedFineTune(StableDiffusionModel):
             loss = base_loss.mean()
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
-            logger.warning("Warning: NaN or Inf loss encountered, skipping this batch.")
-            # 返回一个零 loss, 这样梯度更新不会改变模型参数
-            return torch.tensor(0.0, device=loss.device, requires_grad=True)
+            logger.error(f"Error: NaN or Inf loss encountered! Loss value: {loss.item()}")
+            # Raising an error will stop the training process
+            raise RuntimeError("NaN or Inf loss detected, stopping training.")
         
         return loss
 

@@ -325,15 +325,7 @@ class Trainer:
         else:
             logger.info(f"Starting training from epoch {self.current_epoch} and step {self.global_step}")
 
-        # 添加一个批次处理函数来确保数据在正确的设备上
-        # def process_batch(batch):
-        #     if isinstance(batch, torch.Tensor):
-        #         return batch.to(target_device)
-        #     elif isinstance(batch, dict):
-        #         return {k: process_batch(v) for k, v in batch.items()}
-        #     elif isinstance(batch, (list, tuple)):
-        #         return type(batch)(process_batch(x) for x in batch)
-        #     return batch
+
 
         should_stop = False
         if cfg.max_epochs > 0 and self.current_epoch >= cfg.max_epochs:
