@@ -5,7 +5,6 @@ import lightning as pl
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
-import lpips
 from torch.distributions.beta import Beta
 
 from modules.sdxl_model import StableDiffusionModel
@@ -97,11 +96,6 @@ class SupervisedFineTune(StableDiffusionModel):
     def init_model(self):
         super().init_model()
 
-
-        self.lpips_loss_fn = lpips.LPIPS(net='vgg').to(self.target_device).eval()
-        for param in self.lpips_loss_fn.parameters():
-            param.requires_grad = False
-
         beta_alpha = self.config.advanced.get("beta_alpha", 0.5)
         beta_beta = self.config.advanced.get("beta_beta", 0.5)
         self.beta_distribution = Beta(torch.tensor([beta_alpha], device=self.target_device),
@@ -147,20 +141,10 @@ class SupervisedFineTune(StableDiffusionModel):
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
         target_v = noise - latents
-        target_x = latents.float()
 
-        huber_c = 0.00054 * math.prod(latents.shape[1:])
-        velocity_diff_sq = ((model_pred.float() - target_v.float()) ** 2).sum(dim=(1, 2, 3))
-        huber_loss = torch.sqrt(velocity_diff_sq + huber_c**2) - huber_c
-
-        x_pred = noisy_latents.float() - sigmas_view.float() * model_pred.float()
-        lpips_loss = self.lpips_loss_fn(x_pred, target_x).squeeze()
-
-        t_weight = sigmas.float()
-        safe_t_weight = torch.max(t_weight, torch.tensor(1e-6, device=t_weight.device))
-
-        combined_loss_per_sample = (1.0 - t_weight) * huber_loss + (1.0 / safe_t_weight) * lpips_loss
-        base_loss = combined_loss_per_sample
+        # target = noise - latents # This is target_v
+        # MSE loss between predicted velocity and target velocity
+        base_loss = torch.mean(((model_pred.float() - target_v.float()) ** 2).reshape(latents.shape[0], -1), 1)
 
         if hasattr(self, "tag_loss_module"):
             self.tag_loss_module.global_step = self.global_step
@@ -170,11 +154,11 @@ class SupervisedFineTune(StableDiffusionModel):
             )
 
             if hasattr(self, "log_dict"):
+                # Log individual unweighted components and tag info
                 log_dict = {
-                    "train/huber_loss_unweighted": huber_loss.mean().item(),
-                    "train/lpips_loss_unweighted": lpips_loss.mean().item(),
+                    "train/base_loss": base_loss.mean().item(), # Log original MSE loss
                     "train/tag_loss_weight": weights.mean().item(),
-                    "train/weighted_loss": (base_loss * weights).mean().item(),
+                    "train/weighted_loss": (base_loss * weights).mean().item(), # Final weighted loss
                     "train/max_weight": weights.max().item(),
                     "train/min_weight": weights.min().item(),
                     "train/special_tags_count": sum(1 for prompt in batch["prompts"]
