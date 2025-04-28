@@ -1,16 +1,21 @@
 import safetensors
 import torch
-import os
+import os, math
 import lightning as pl
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
+import lpips
+from torch.distributions.beta import Beta
 
 from modules.sdxl_model import StableDiffusionModel
+from modules.scheduler_utils import apply_snr_weight
 from lightning.pytorch.utilities.model_summary import ModelSummary
+
 
 def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
     model_path = config.trainer.model_path
+
     model = SupervisedFineTune(
         model_path=model_path, 
         config=config, 
@@ -81,27 +86,30 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
         model.mark_forward_method('generate_samples')            
         
     dataloader = fabric.setup_dataloaders(dataloader)
+        
+    # set here; 
     model._fabric_wrapped = fabric
     model.model.requires_grad_(True)
     return model, dataset, dataloader, optimizer, scheduler
 
-def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
-    sigmas = sch.sigmas.to(device=device, dtype=dtype)
-    schedule_timesteps = sch.timesteps.to(device)
-    timesteps = timesteps.to(device)
 
-    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+class SupervisedFineTune(StableDiffusionModel):
+    def __init__(self, model_path: str, config: OmegaConf, device: torch.device):
+        self.target_device = device
+        super().__init__(model_path=model_path, config=config)
 
-    sigma = sigmas[step_indices].flatten()
-    while len(sigma.shape) < n_dim:
-        sigma = sigma.unsqueeze(-1)
-    return sigma
+        self.lpips_loss_fn = lpips.LPIPS(net='vgg').to(self.target_device).eval()
+        for param in self.lpips_loss_fn.parameters():
+            param.requires_grad = False
 
-class SupervisedFineTune(StableDiffusionModel):  
+        beta_alpha = config.advanced.get("beta_alpha", 0.5)
+        beta_beta = config.advanced.get("beta_beta", 0.5)
+        self.beta_distribution = Beta(torch.tensor([beta_alpha], device=self.target_device),
+                                      torch.tensor([beta_beta], device=self.target_device))
+
     def init_model(self):
         super().init_model()
-        
-        # 初始化tag loss模块
+
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
             
@@ -115,7 +123,7 @@ class SupervisedFineTune(StableDiffusionModel):
                 strength=self.config.advanced.get("tag_loss_strength", 1.0),
                 tag_rewards=self.config.advanced.get("tag_rewards", {})
             )
-    
+
     def forward(self, batch):
         advanced = self.config.get("advanced", {})
         if not batch["is_latent"]:
@@ -134,31 +142,29 @@ class SupervisedFineTune(StableDiffusionModel):
 
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
-        
-        # 使用独立的 get_sigmas 函数
-        scheduler_device = self.noise_scheduler.timesteps.device
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
-        u = torch.nn.functional.sigmoid(u)
-        indices = (u * 1000).long()
-        timesteps = self.noise_scheduler.timesteps[indices]  # 在同一设备上索引
-        timesteps = timesteps.to(device=latents.device) 
-        
-        sigmas = get_sigmas(
-            self.noise_scheduler, 
-            timesteps, 
-            n_dim=latents.ndim, 
-            dtype=latents.dtype, 
-            device=latents.device
-        )
-        
-        noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+
+        sigmas = self.beta_distribution.sample((bsz,)).squeeze(-1)
+        timesteps = sigmas * 1000.0
+        sigmas_view = sigmas.view(-1, 1, 1, 1)
+        noisy_latents = sigmas_view * noise + (1.0 - sigmas_view) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
-        target = noise - latents
-        base_loss = torch.mean(((model_pred.float() - target.float()) ** 2).reshape(latents.shape[0], -1), 1)
-        
-        
-        # 应用tag loss
+        target_v = noise - latents
+        target_x = latents.float()
+
+        huber_c = 0.00054 * math.prod(latents.shape[1:])
+        velocity_diff_sq = ((model_pred.float() - target_v.float()) ** 2).sum(dim=(1, 2, 3))
+        huber_loss = torch.sqrt(velocity_diff_sq + huber_c**2) - huber_c
+
+        x_pred = noisy_latents.float() - sigmas_view.float() * model_pred.float()
+        lpips_loss = self.lpips_loss_fn(x_pred, target_x).squeeze()
+
+        t_weight = sigmas.float()
+        safe_t_weight = torch.max(t_weight, torch.tensor(1e-6, device=t_weight.device))
+
+        combined_loss_per_sample = (1.0 - t_weight) * huber_loss + (1.0 / safe_t_weight) * lpips_loss
+        base_loss = combined_loss_per_sample
+
         if hasattr(self, "tag_loss_module"):
             self.tag_loss_module.global_step = self.global_step
             weights = self.tag_loss_module.calculate_loss_weights(
@@ -168,6 +174,8 @@ class SupervisedFineTune(StableDiffusionModel):
 
             if hasattr(self, "log_dict"):
                 log_dict = {
+                    "train/huber_loss_unweighted": huber_loss.mean().item(),
+                    "train/lpips_loss_unweighted": lpips_loss.mean().item(),
                     "train/tag_loss_weight": weights.mean().item(),
                     "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
@@ -177,7 +185,7 @@ class SupervisedFineTune(StableDiffusionModel):
                                                     if self.tag_loss_module.check_fn(tag.strip()))
                 }
                 self.log_dict(log_dict)
-                self.tag_loss_metrics = log_dict # 存储metrics供trainer使用
+                self.tag_loss_metrics = log_dict
 
             loss = (base_loss * weights).mean()
         else:
@@ -185,7 +193,6 @@ class SupervisedFineTune(StableDiffusionModel):
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             logger.error(f"Error: NaN or Inf loss encountered! Loss value: {loss.item()}")
-            # Raising an error will stop the training process
             raise RuntimeError("NaN or Inf loss detected, stopping training.")
         
         return loss
