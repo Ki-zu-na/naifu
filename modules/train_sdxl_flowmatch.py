@@ -94,21 +94,18 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
 
 
 class SupervisedFineTune(StableDiffusionModel):
-    def __init__(self, model_path: str, config: OmegaConf, device: torch.device):
-        self.target_device = device
-        super().__init__(model_path=model_path, config=config)
+    def init_model(self):
+        super().init_model()
+
 
         self.lpips_loss_fn = lpips.LPIPS(net='vgg').to(self.target_device).eval()
         for param in self.lpips_loss_fn.parameters():
             param.requires_grad = False
 
-        beta_alpha = config.advanced.get("beta_alpha", 0.5)
-        beta_beta = config.advanced.get("beta_beta", 0.5)
+        beta_alpha = self.config.advanced.get("beta_alpha", 0.5)
+        beta_beta = self.config.advanced.get("beta_beta", 0.5)
         self.beta_distribution = Beta(torch.tensor([beta_alpha], device=self.target_device),
                                       torch.tensor([beta_beta], device=self.target_device))
-
-    def init_model(self):
-        super().init_model()
 
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
