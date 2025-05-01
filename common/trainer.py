@@ -313,7 +313,7 @@ class Trainer:
                 # 当没有找到 latest_ckpt 时，尝试从 model_path 中提取信息
                 model_path = cfg.get("model_path", "")
                 if model_path:
-                    match = re.search(r'checkpoint-e(\d+)_s(\d+)\.ckpt', os.path.basename(model_path))
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(model_path))
                     if match:
                         self.current_epoch = int(match.group(1))
                         self.global_step = int(match.group(2))
