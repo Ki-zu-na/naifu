@@ -169,131 +169,157 @@ def process_prompts_with_metadata(
 ) -> Entry:
 
     shuffle_caption = True
-    # New parameters for dropping all tags before or after keep_tokens_separator
-    drop_all_fixed_prob = 0.1  # Probability to drop all fixed tokens
-    drop_all_flex_prob = 0.2    # Probability to drop all flex tokens
+    # Probabilities for various augmentations
+    drop_all_fixed_prob = 0.1
+    drop_all_flex_prob = 0.2
     drop_artist_prob = 0.05
-    dropout_rate = 0.3
-    caption_nl_prob = 0.5
-    style_mix_prob = 0.5
+    dropout_rate = 0.3  # General dropout rate for tags
+    caption_nl_prob = 0.5  # Probability of using natural language summaries
+    style_mix_prob = 0.5  # Probability of mixing brief/regular summary if both exist
     add_fixed_prefix_prob = 0.3
     add_underline_prob = 0.1
 
     if not data_entry.extras:
+        # Fallback if no extras are provided, process the existing prompt
         train_caption = data_entry.prompt
-        train_caption = train_caption.replace("_", " ")
-        train_caption_tags = [tag.strip() for tag in train_caption.split(",") if tag.strip()] # 将caption分割成tags
+        train_caption = train_caption.replace("_", " ") # Replace underscores with spaces
+        train_caption_tags = [tag.strip() for tag in train_caption.split(",") if tag.strip()]
 
         if shuffle_caption:
-            random.shuffle(train_caption_tags) # 打乱tags
+            random.shuffle(train_caption_tags)
         new_prompt = ", ".join(train_caption_tags)
         data_entry.prompt = new_prompt
         return data_entry
 
     extras = data_entry.extras
-
-    fixed_tags = []
-    drop_artist = random.random() < drop_artist_prob
-
+    
+    # Nested helper functions for tag manipulation
     def add_prefix_to_tags(tags_str, prefix):
         if not tags_str:
             return []
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+        # Only add prefix if add_fixed_prefix_prob is met, but apply to all tags if so.
+        # The original logic seemed to imply prefixing all or none based on one random roll.
+        # If prefixing is selective per tag, this needs adjustment.
+        # Assuming if prob met, all tags in this group get prefix.
         if random.random() < add_fixed_prefix_prob:
             return [f"{prefix}:{tag}" for tag in tags]
         return tags
-    def add_underline_to_tags(tags_list):
-        updated_fixed_tags = []
-        for tag in tags_list:
-            if ' ' in tag and random.random() < add_underline_prob: # 检查 tag 中是否含有空格，并以一定概率进行替换
-                updated_fixed_tags.append(tag.replace(' ', '_')) # 将空格替换为下划线
-            else:
-                updated_fixed_tags.append(tag) # 保留原 tag
-        return updated_fixed_tags # 更新 fixed_tags 列表
 
-    if 'tag_string_artist' in extras and extras['tag_string_artist'] and not drop_artist:
-        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_artist'], "artist"))
-    if 'tag_string_character' in extras and extras['tag_string_character']:
-        fixed_tags.extend(add_prefix_to_tags(extras['tag_string_character'], "character"))
-    if 'tag_string_copyright' in extras and extras['tag_string_copyright']:
-        copyright_tags = add_prefix_to_tags(extras['tag_string_copyright'], "copyright")
-        copyright_tags = [tag for tag in copyright_tags if "original" not in tag]
-        fixed_tags.extend(copyright_tags)
+    def add_underline_to_tags(tags_list):
+        updated_tags = []
+        for tag in tags_list:
+            if ' ' in tag and random.random() < add_underline_prob:
+                updated_tags.append(tag.replace(' ', '_'))
+            else:
+                updated_tags.append(tag)
+        return updated_tags
+
+    # Process fixed tags
+    fixed_tags = []
+    drop_artist = random.random() < drop_artist_prob
+
+    if 'final_artist_tag' in extras and extras['final_artist_tag'] and not drop_artist:
+        fixed_tags.extend(add_prefix_to_tags(extras['final_artist_tag'], "artist"))
+    if 'final_character_tag' in extras and extras['final_character_tag']:
+        fixed_tags.extend(add_prefix_to_tags(extras['final_character_tag'], "character"))
+    if 'final_copyright_tag' in extras and extras['final_copyright_tag']:
+        copyright_tags_str = extras['final_copyright_tag']
+        # Filter out "original" from copyright tags before prefixing
+        raw_copyright_tags = [tag.strip() for tag in copyright_tags_str.split(',') if tag.strip()]
+        filtered_copyright_tags = [tag for tag in raw_copyright_tags if "original" not in tag.lower()] # case-insensitive "original" check
+        if filtered_copyright_tags:
+            fixed_tags.extend(add_prefix_to_tags(",".join(filtered_copyright_tags), "copyright"))
+    
+    # User's addition: final_features_tag_prefix moved to fixed_tags
+    if 'final_features_tag_prefix' in extras and extras['final_features_tag_prefix']:
+        fixed_tags.append(extras['final_features_tag_prefix'].strip())
 
     fixed_tags = add_underline_to_tags(fixed_tags)
+
+    # --- Helper function to get detailed flex tags ---
+    def _get_detailed_flex_tags():
+        # Uses variables from the outer scope: extras, shuffle_caption, dropout_rate,
+        # add_underline_to_tags, add_prefix_to_tags, and the global dropout_tags.
+        detailed_tags_list = []
+        
+        if 'final_features_tag' in extras and extras['final_features_tag']:
+            detailed_tags_list.extend([t.strip() for t in extras['final_features_tag'].split(",") if t.strip()])
+        
+        if 'final_rating_tag' in extras and extras['final_rating_tag']:
+            rating_keywords = {"explicit", "sensitive", "nsfw", "general"} # Use a set for faster lookups
+            raw_rating_elements = [tag.strip().lower() for tag in extras['final_rating_tag'].split(',') if tag.strip()]
+            
+            ratings_to_prefix = [elem for elem in raw_rating_elements if elem in rating_keywords]
+            other_rating_elements = [elem for elem in raw_rating_elements if elem not in rating_keywords]
+
+            if ratings_to_prefix:
+                 detailed_tags_list.extend(add_prefix_to_tags(", ".join(ratings_to_prefix), "rating"))
+            detailed_tags_list.extend(other_rating_elements)
+
+        if 'aes_rating' in extras and extras['aes_rating']:
+            detailed_tags_list.append(extras['aes_rating'])
+        
+        if 'additional_tags' in extras and extras['additional_tags']:
+            tags_from_additional = [t.strip() for t in extras['additional_tags'].split(',') if t.strip()]
+            detailed_tags_list.extend(tags_from_additional)
+
+        # Use 'year_tag' consistent with user's latest change
+        if 'year_tag' in extras and extras['year_tag']:
+            detailed_tags_list.append(extras['year_tag'])
+        if 'year_tag_specific' in extras and extras['year_tag_specific']:
+            detailed_tags_list.append(extras['year_tag_specific'])
+
+        if shuffle_caption:
+            random.shuffle(detailed_tags_list)
+        
+        detailed_tags_list = dropout_tags(detailed_tags_list, dropout_rate) # dropout_tags is global
+        detailed_tags_list = add_underline_to_tags(detailed_tags_list)
+        
+        return detailed_tags_list
+    # --- End of helper function ---
 
     flex_tags = []
     caption_nl = random.random() < caption_nl_prob
     style_mix = random.random() < style_mix_prob
+
+    if caption_nl:
+        # Try to use summaries
+        summary_text_to_use = None
+        has_regular_summary = 'regular_summary' in extras and extras['regular_summary'] and extras['regular_summary'].strip()
+        has_brief_summary = 'brief_summary' in extras and extras['brief_summary'] and extras['brief_summary'].strip()
+        
+        if has_regular_summary and has_brief_summary:
+            summary_text_to_use = extras['brief_summary'].strip() if style_mix else extras['regular_summary'].strip()
+        elif has_regular_summary:
+            summary_text_to_use = extras['regular_summary'].strip()
+        elif has_brief_summary:
+            summary_text_to_use = extras['brief_summary'].strip()
+        
+        if summary_text_to_use: # If a non-empty summary was found
+            flex_tags.append(summary_text_to_use)
+            # Summaries are typically single strings and not further processed with dropout/underline here.
     
-    # 检查是否有tag_string_general或caption摘要
-    has_general_tags = 'tag_string_general' in extras and extras['tag_string_general']
-    has_regular_summary = 'regular_summary' in extras and extras['regular_summary']
-    has_brief_summary = 'brief_summary' in extras and extras['brief_summary']
-    
-    if has_general_tags and not caption_nl:
-        flex_tags = [t.strip() for t in extras['tag_string_general'].split(",") if t.strip()]
-        if  'rating' in extras and extras['rating']:
-            rating_tags = []
-            rating = extras['rating']
-            if rating == 'e':
-                rating_tags = ["explicit"]
-            elif rating == 's':
-                rating_tags = ["sensitive"]
-            elif rating == 'q':
-                rating_tags = ["nsfw"] 
-            elif rating == 'g':
-                rating_tags = ["general"]
-            flex_tags.extend(add_prefix_to_tags(", ".join(rating_tags), "rating")) # rating 作为一个整体添加前缀
-        if 'aes_rating' in extras and extras['aes_rating']:
-            flex_tags.append(extras['aes_rating'])
-        if 'tag_string_meta' in extras and extras['tag_string_meta']:
-            flex_tags.append(extras['tag_string_meta'])
-        if 'yeartag' in extras and extras['yeartag']:
-            flex_tags.append(extras['yeartag'])
-        if 'year_tag_specific' in extras and extras['year_tag_specific']:
-            flex_tags.append(extras['year_tag_specific'])
+    # If flex_tags is still empty (i.e., caption_nl was false, or it was true but no valid summary was found),
+    # then populate with detailed tags.
+    if not flex_tags:
+        flex_tags.extend(_get_detailed_flex_tags())
 
-        if shuffle_caption:
-            random.shuffle(flex_tags)
-        flex_tags = dropout_tags(flex_tags, dropout_rate)
-        flex_tags = add_underline_to_tags(flex_tags)
-
-        if 'regular_summary' in extras and extras['regular_summary'] and 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
-            if style_mix:
-                flex_tags = [extras['brief_summary']]
-            else:
-                flex_tags = [extras['regular_summary']]
-        elif 'regular_summary' in extras and extras['regular_summary'] and caption_nl:
-            flex_tags = [extras['regular_summary']]
-        elif 'brief_summary' in extras and extras['brief_summary'] and caption_nl:
-            flex_tags = [extras['brief_summary']]
-
-    elif (has_regular_summary or has_brief_summary) and caption_nl:
-        if 'train_caption' in extras and extras['train_caption']:
-            flex_tags = [extras['train_caption']]
-        else:
-            flex_tags = [] # 如果train_caption也不存在，则使用空列表
-
-    else:
-        flex_tags = [] # 处理 tag_string_general 缺失的情况，虽然按理说应该存在。
-
-    # Decide whether to drop all fixed or flex tokens
-    drop_all_fixed = random.random() < drop_all_fixed_prob
-    drop_all_flex = random.random() < drop_all_flex_prob
-
-    if drop_all_fixed:
+    # Apply drop_all probabilities
+    if random.random() < drop_all_fixed_prob:
         fixed_tags = []
-
-    if drop_all_flex:
+    if random.random() < drop_all_flex_prob:
         flex_tags = []
     
     if shuffle_caption:
         random.shuffle(fixed_tags)
-    if (has_general_tags or has_regular_summary or has_brief_summary):
-        new_prompt = ", ".join(fixed_tags + flex_tags)
-    else:
-        new_prompt = ", ".join(flex_tags)
+        # Flex tags from _get_detailed_flex_tags are already shuffled if shuffle_caption is true.
+        # Flex tags from summaries (single strings) are not shuffled.
+
+    all_tags = fixed_tags + flex_tags
+    # Filter out any potentially empty strings before joining
+    all_tags = [tag for tag in all_tags if tag and tag.strip()] 
+    new_prompt = ", ".join(all_tags)
 
     return Entry(
         is_latent=data_entry.is_latent,
