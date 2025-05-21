@@ -25,7 +25,7 @@ def get_world_size():
 
 def create_scaled_precision_plugin():
     from lightning.fabric.plugins.precision.amp import MixedPrecision
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
     org_unscale_grads = scaler._unscale_grads_
     def _unscale_grads_replacer(optimizer, inv_scale, found_inf, allow_fp16):
         return org_unscale_grads(optimizer, inv_scale, found_inf, True)

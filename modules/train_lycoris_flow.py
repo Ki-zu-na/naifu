@@ -199,6 +199,7 @@ class StableDiffusionModel(SupervisedFineTune):
         self.text_encoder_1.train()
         self.text_encoder_2.train()
         self.init_lycoris()
+        self.init_tag_loss_module()
 
     def init_lycoris(self):
         cfg = self.config

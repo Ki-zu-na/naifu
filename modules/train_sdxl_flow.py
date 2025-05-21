@@ -94,7 +94,9 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
 class SupervisedFineTune(StableDiffusionModel):  
     def init_model(self):
         super().init_model()
+        self.init_tag_loss_module()
 
+    def init_tag_loss_module(self):
         # 初始化tag loss模块
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
