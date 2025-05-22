@@ -277,7 +277,7 @@ class Trainer:
                         if self.scheduler:
                             objects_to_load["scheduler"] = self.scheduler
 
-                        loaded_extras = self.fabric.load(derived_state_file_path, states=objects_to_load)
+                        loaded_extras = self.fabric.load(derived_state_file_path, state=objects_to_load)
 
                         self.global_step = int(loaded_extras.pop("global_step", self.global_step))
                         self.current_epoch = int(loaded_extras.pop("current_epoch", self.current_epoch))
