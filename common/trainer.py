@@ -256,72 +256,117 @@ class Trainer:
         # self.fabric.load(model_path + "_state.pt", state)
 
         if cfg.get("resume"):
+            resumed_via_full_state = False
+
             if latest_ckpt:
-                # 修改正则表达式以匹配两种文件格式
-                match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(latest_ckpt))
-                if match:
-                    self.current_epoch = int(match.group(1))
-                    self.global_step = int(match.group(2))
-                    logger.info(f"从文件名提取训练状态：轮数 {self.current_epoch}，步数 {self.global_step}")
-                
-                # 然后尝试从优化器状态或checkpoint中获取信息
-                opt_name = Path(latest_ckpt).stem + "_optimizer"
-                opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
-                if opt_path.is_file():
-                    remainder = fabric.load(opt_path, {"optimizer": self.optimizer})
-                    logger.info(f"Loaded optimizer state from {opt_path}")
-                    self.global_step = int(remainder.pop("global_step", self.global_step))
-                    self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
-                else:
-                    if latest_ckpt.endswith(".ckpt"):
-                        sd = torch.load(latest_ckpt, map_location="cpu")
-                        self.global_step = int(sd.pop("global_step", self.global_step))
-                        self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
-                    elif latest_ckpt.endswith(".safetensors"):
-                        with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f:
-                            metadata = f.metadata()
-                            self.global_step = int(metadata.get("global_step", self.global_step))
-                            self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
-            
-                logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+                # Try to load from a comprehensive state file first
+                derived_state_file_path = ""
+                if latest_ckpt.endswith(".ckpt"):
+                    derived_state_file_path = latest_ckpt.replace(".ckpt", "_state.pt")
+                elif latest_ckpt.endswith(".safetensors"):
+                    derived_state_file_path = latest_ckpt.replace(".safetensors", "_state.pt")
+                # Consider if latest_ckpt could already be a _state.pt file.
+                # For this logic, we assume get_latest_checkpoint returns the primary model file.
 
-                if 'sd' in locals():
-                    del sd
-                torch.cuda.empty_cache()
-                gc.collect()
-                torch.cuda.memory_summary(device=None, abbreviated=False)
-
-                # 尝试加载TagLoss状态
-                tag_loss_loaded = False
-                
-                # 检查是否有_state.pt文件
-                state_path = latest_ckpt.replace(".ckpt", "_state.pt")
-                if os.path.exists(state_path):
+                if derived_state_file_path and os.path.exists(derived_state_file_path):
+                    logger.info(f"Attempting to load full training state from: {derived_state_file_path}")
                     try:
-                        state_dict = torch.load(state_path, map_location="cpu")
-                        tag_loss_state = state_dict.get("tag_loss_state", None)
+                        objects_to_load = {"model": self.model}
+                        if self.optimizer:
+                            objects_to_load["optimizer"] = self.optimizer
+                        if self.scheduler:
+                            objects_to_load["scheduler"] = self.scheduler
+
+                        loaded_extras = self.fabric.load(derived_state_file_path, states=objects_to_load)
+
+                        self.global_step = int(loaded_extras.pop("global_step", self.global_step))
+                        self.current_epoch = int(loaded_extras.pop("current_epoch", self.current_epoch))
                         
-                        if tag_loss_state and hasattr(self.model, "tag_loss_module"):
-                            tag_loss_loaded = self.model.tag_loss_module.load_state_dict(tag_loss_state)
-                            logger.info(f"从{state_path}加载TagLoss状态")
+                        tag_loss_state_from_full = loaded_extras.get("tag_loss_state")
+                        if tag_loss_state_from_full and hasattr(self.model, "tag_loss_module"):
+                            self.model.tag_loss_module.load_state_dict(tag_loss_state_from_full)
+                            logger.info(f"Loaded TagLoss state from full state file: {derived_state_file_path}.")
+                        elif hasattr(self.model, "tag_loss_module") and not tag_loss_state_from_full:
+                             logger.info(f"TagLoss state not found in {derived_state_file_path} or model has no tag_loss_module for full state load.")
+                        
+                        logger.info(f"Successfully resumed training from full state file: {derived_state_file_path}. Epoch: {self.current_epoch}, Step: {self.global_step}")
+                        resumed_via_full_state = True
                     except Exception as e:
-                        logger.warning(f"加载TagLoss状态时出错: {e}")
-                
-                if not tag_loss_loaded and hasattr(self.model, "tag_loss_module"):
-                    logger.warning("未能加载TagLoss状态，将使用初始状态")
-            else:
-                # 当没有找到 latest_ckpt 时，尝试从 model_path 中提取信息
-                model_path = cfg.get("model_path", "")
-                if model_path:
-                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(model_path))
+                        logger.warning(f"Failed to load full state from {derived_state_file_path}: {e}. Falling back to older resume methods.")
+            
+            if not resumed_via_full_state:
+                if latest_ckpt:
+                    match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(latest_ckpt))
                     if match:
                         self.current_epoch = int(match.group(1))
                         self.global_step = int(match.group(2))
-                        logger.info(f"No latest checkpoint found. Extracted epoch {self.current_epoch} and step {self.global_step} from model path.")
+                        logger.info(f"从文件名提取训练状态：轮数 {self.current_epoch}，步数 {self.global_step}")
+                    
+                    opt_name = Path(latest_ckpt).stem + "_optimizer"
+                    opt_path = Path(latest_ckpt).with_stem(opt_name).with_suffix(".pt")
+                    if opt_path.is_file():
+                        remainder = self.fabric.load(opt_path, {"optimizer": self.optimizer})
+                        logger.info(f"Loaded optimizer state from {opt_path}")
+                        self.global_step = int(remainder.pop("global_step", self.global_step))
+                        self.current_epoch = int(remainder.pop("current_epoch", self.current_epoch))
                     else:
-                        logger.warn("No latest checkpoint found and couldn't extract information from model path.")
-                else:
-                    logger.info("No latest checkpoint found and no model path provided.")
+                        if latest_ckpt.endswith(".ckpt"):
+                            sd = torch.load(latest_ckpt, map_location="cpu")
+                            self.global_step = int(sd.pop("global_step", self.global_step))
+                            self.current_epoch = int(sd.pop("current_epoch", self.current_epoch))
+                            # 'sd' will be deleted in the common cleanup section if it exists
+                        elif latest_ckpt.endswith(".safetensors"):
+                            # Ensure 'import safetensors.torch' is present at the top of the file
+                            with safetensors.torch.safe_open(latest_ckpt, framework="pt") as f: # type: ignore
+                                metadata = f.metadata()
+                                if metadata: # Check if metadata is not None
+                                    self.global_step = int(metadata.get("global_step", self.global_step))
+                                    self.current_epoch = int(metadata.get("current_epoch", self.current_epoch))
+                
+                    logger.info(f"Resuming training from step {self.global_step} and epoch {self.current_epoch}")
+
+                    # Attempt to load TagLoss state separately if not loaded via full state
+                    # This uses derived_state_file_path if available and file exists
+                    if derived_state_file_path and os.path.exists(derived_state_file_path) and hasattr(self.model, "tag_loss_module"):
+                        tag_loss_loaded_separately = False
+                        logger.info(f"Attempting to separately load TagLoss state from {derived_state_file_path} as full state load was not successful or did not include it.")
+                        try:
+                            state_dict_for_tag_loss = torch.load(derived_state_file_path, map_location="cpu")
+                            tag_loss_state = state_dict_for_tag_loss.get("tag_loss_state", None)
+                            
+                            if tag_loss_state:
+                                self.model.tag_loss_module.load_state_dict(tag_loss_state)
+                                tag_loss_loaded_separately = True
+                                logger.info(f"从 {derived_state_file_path} 单独加载TagLoss状态成功。")
+                        except Exception as e:
+                            logger.warning(f"单独加载TagLoss状态时出错: {e}")
+                        
+                        if not tag_loss_loaded_separately:
+                             logger.warning(f"未能从 {derived_state_file_path} 单独加载TagLoss状态，或文件中不存在该状态。")
+                    elif hasattr(self.model, "tag_loss_module"):
+                        logger.warning("未能加载TagLoss状态（因相应state文件未找到或未定义），将使用初始状态。")
+
+                else: # No latest_ckpt found
+                    model_path = cfg.get("model_path", "")
+                    if model_path:
+                        match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(model_path))
+                        if match:
+                            self.current_epoch = int(match.group(1))
+                            self.global_step = int(match.group(2))
+                            logger.info(f"No latest checkpoint found. Extracted epoch {self.current_epoch} and step {self.global_step} from model path.")
+                        else:
+                            logger.warn("No latest checkpoint found and couldn't extract information from model path.")
+                    else:
+                        logger.info("No latest checkpoint found and no model path provided.")
+
+            # Common cleanup after all resume attempts
+            # Run if resume was attempted (either via latest_ckpt or model_path in fallback)
+            if latest_ckpt or (not resumed_via_full_state and cfg.get("model_path", "")):
+                if 'sd' in locals() and not resumed_via_full_state : # sd is only relevant for the fallback ckpt loading path
+                    del sd
+                torch.cuda.empty_cache()
+                gc.collect()
+                # torch.cuda.memory_summary(device=None, abbreviated=False) # Optional
         else:
             logger.info(f"Starting training from epoch {self.current_epoch} and step {self.global_step}")
 
