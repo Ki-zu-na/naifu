@@ -271,13 +271,13 @@ class Trainer:
                 if derived_state_file_path and os.path.exists(derived_state_file_path):
                     logger.info(f"Attempting to load full training state from: {derived_state_file_path}")
                     try:
-                        objects_to_load = {"model": self.model}
-                        if self.optimizer:
-                            objects_to_load["optimizer"] = self.optimizer
-                        if self.scheduler:
-                            objects_to_load["scheduler"] = self.scheduler
-
-                        loaded_extras = self.fabric.load(derived_state_file_path, state=objects_to_load)
+                        state = dict(
+                            mode=self.model,
+                            global_step=self.global_step, 
+                            current_epoch=self.current_epoch,
+                            optimizer=self.optimizer,
+                        )
+                        loaded_extras = self.fabric.load(derived_state_file_path, state=state, strict=False)
 
                         self.global_step = int(loaded_extras.pop("global_step", self.global_step))
                         self.current_epoch = int(loaded_extras.pop("current_epoch", self.current_epoch))
