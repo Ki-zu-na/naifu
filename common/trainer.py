@@ -273,14 +273,14 @@ class Trainer:
                     try:
                         state = dict(
                             mode=self.model,
-                            global_step=self.global_step, 
-                            current_epoch=self.current_epoch,
                             optimizer=self.optimizer,
                         )
                         loaded_extras = self.fabric.load(derived_state_file_path, state=state, strict=False)
-
-                        self.global_step = int(loaded_extras.pop("global_step", self.global_step))
-                        self.current_epoch = int(loaded_extras.pop("current_epoch", self.current_epoch))
+                        match = re.search(r'checkpoint-e(\d+)_s(\d+)(?:_state)?(?:\.ckpt|\.pt|\.safetensors)', os.path.basename(latest_ckpt))
+                        if match:
+                            self.current_epoch = int(match.group(1))
+                            self.global_step = int(match.group(2))
+                            logger.info(f"从文件名提取训练状态：轮数 {self.current_epoch}，步数 {self.global_step}")
                         
                         tag_loss_state_from_full = loaded_extras.get("tag_loss_state")
                         if tag_loss_state_from_full and hasattr(self.model, "tag_loss_module"):
