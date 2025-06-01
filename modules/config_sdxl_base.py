@@ -33,14 +33,14 @@ model:
       params:
         emb_models:
           # crossattn cond
-          - is_trainable: False
+          - is_trainable: True
             input_key: prompts
             target: models.sgm.encoders.FrozenCLIPEmbedder
             params:
               layer: hidden
               layer_idx: 11
           # crossattn and vector cond
-          - is_trainable: False
+          - is_trainable: True
             input_key: prompts
             target: models.sgm.encoders.FrozenOpenCLIPEmbedder2
             params:
