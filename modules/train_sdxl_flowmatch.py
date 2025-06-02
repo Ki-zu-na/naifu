@@ -5,7 +5,7 @@ import lightning as pl
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
-from torch.distributions.beta import Beta
+
 from diffusers import  FlowMatchEulerDiscreteScheduler
 from modules.sdxl_model import StableDiffusionModel
 from modules.scheduler_utils import apply_snr_weight
