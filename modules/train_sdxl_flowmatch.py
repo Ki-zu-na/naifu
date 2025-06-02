@@ -95,12 +95,10 @@ def setup(fabric: pl.Fabric, config: OmegaConf) -> tuple:
 class SupervisedFineTune(StableDiffusionModel):
     def init_model(self):
         super().init_model()
+        self.init_tag_loss_module()
 
-        beta_alpha = self.config.advanced.get("beta_alpha", 0.5)
-        beta_beta = self.config.advanced.get("beta_beta", 0.5)
-        self.beta_distribution = Beta(torch.tensor([beta_alpha], device=self.target_device),
-                                      torch.tensor([beta_beta], device=self.target_device))
-
+    def init_tag_loss_module(self):
+        # 初始化tag loss模块
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
             
@@ -134,10 +132,23 @@ class SupervisedFineTune(StableDiffusionModel):
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
 
-        sigmas = self.beta_distribution.sample((bsz,)).squeeze(-1)
-        timesteps = sigmas * 1000.0
-        sigmas_view = sigmas.view(-1, 1, 1, 1)
-        noisy_latents = sigmas_view * noise + (1.0 - sigmas_view) * latents
+        # 使用独立的 get_sigmas 函数
+        scheduler_device = self.noise_scheduler.timesteps.device
+        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
+        u = torch.nn.functional.sigmoid(u)
+        indices = (u * 1000).long()
+        timesteps = self.noise_scheduler.timesteps[indices]  # 在同一设备上索引
+        timesteps = timesteps.to(device=latents.device) 
+
+        sigmas = get_sigmas(
+            self.noise_scheduler, 
+            timesteps, 
+            n_dim=latents.ndim, 
+            dtype=latents.dtype, 
+            device=latents.device
+        )
+
+        noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
 
         target_v = noise - latents
@@ -154,11 +165,9 @@ class SupervisedFineTune(StableDiffusionModel):
             )
 
             if hasattr(self, "log_dict"):
-                # Log individual unweighted components and tag info
                 log_dict = {
-                    "train/base_loss": base_loss.mean().item(), # Log original MSE loss
                     "train/tag_loss_weight": weights.mean().item(),
-                    "train/weighted_loss": (base_loss * weights).mean().item(), # Final weighted loss
+                    "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
                     "train/min_weight": weights.min().item(),
                     "train/special_tags_count": sum(1 for prompt in batch["prompts"]
@@ -178,3 +187,14 @@ class SupervisedFineTune(StableDiffusionModel):
         
         return loss
 
+def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
+    sigmas = sch.sigmas.to(device=device, dtype=dtype)
+    schedule_timesteps = sch.timesteps.to(device)
+    timesteps = timesteps.to(device)
+
+    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+
+    sigma = sigmas[step_indices].flatten()
+    while len(sigma.shape) < n_dim:
+        sigma = sigma.unsqueeze(-1)
+    return sigma
