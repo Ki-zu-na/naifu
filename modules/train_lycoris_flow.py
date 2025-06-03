@@ -10,7 +10,7 @@ from common.utils import (
     EmptyInitWrapper,
 )
 from common.logging import logger
-from modules.train_sdxl_flow import SupervisedFineTune
+from modules.train_sdxl_flowmatch import SupervisedFineTune
 from modules.sdxl_utils import (
     get_hidden_states_sdxl,
     convert_sdxl_text_encoder_2_checkpoint,
@@ -186,6 +186,9 @@ class StableDiffusionModel(SupervisedFineTune):
             num_train_timesteps=1000,
             clip_sample=False,
         )
+        if self.config.get("noise_scheduler"):
+            scheduler_cls = get_class(self.config.noise_scheduler.name)
+            self.noise_scheduler = scheduler_cls(**self.config.noise_scheduler.params)
         self.batch_size = self.config.trainer.batch_size
         self.vae_encode_bsz = self.config.get("vae_encode_batch_size", self.batch_size)
         if self.vae_encode_bsz < 0:
