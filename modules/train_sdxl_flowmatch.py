@@ -149,10 +149,10 @@ class SupervisedFineTune(StableDiffusionModel):
             latent_h, latent_w = latents.shape[2], latents.shape[3]
             current_seq_len = float(latent_h * latent_w)
 
-            base_mu = scheduler_config.base_shift
-            max_mu = scheduler_config.max_shift
-            base_len = float(scheduler_config.base_image_seq_len)
-            max_len = float(scheduler_config.max_image_seq_len)
+            base_mu = scheduler_config.get("base_shift", 0.5)
+            max_mu = scheduler_config.get("max_shift", 1.15)
+            base_len = float(scheduler_config.get("base_image_seq_len", 64))
+            max_len = float(scheduler_config.get("max_image_seq_len", 4096))
 
             current_mu = base_mu # Default to base_mu
             if current_seq_len <= base_len:
