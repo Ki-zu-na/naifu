@@ -132,20 +132,75 @@ class SupervisedFineTune(StableDiffusionModel):
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
 
-
         scheduler_device = self.noise_scheduler.timesteps.device
         u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
         u = torch.nn.functional.sigmoid(u)
-        indices = (u * 1000).long()
-        timesteps = self.noise_scheduler.timesteps[indices] 
-        timesteps = timesteps.to(device=latents.device) 
-        sigmas = get_sigmas(
-            self.noise_scheduler,
-            timesteps, 
-            n_dim=latents.ndim, 
-            dtype=latents.dtype, 
-            device=latents.device
-        )
+        # Assuming num_train_timesteps is 1000 based on typical FlowMatch settings from config
+        # If num_train_timesteps can vary, ensure this factor is consistent with scheduler's init
+        indices = (u * self.noise_scheduler.config.num_train_timesteps).long()
+        # Clamp indices to be within the valid range of self.noise_scheduler.timesteps
+        indices = torch.clamp(indices, 0, len(self.noise_scheduler.timesteps) - 1)
+
+        timesteps = self.noise_scheduler.timesteps[indices]
+        timesteps = timesteps.to(device=latents.device)
+        
+        scheduler_config = self.noise_scheduler.config
+        if scheduler_config.use_dynamic_shifting:
+            latent_h, latent_w = latents.shape[2], latents.shape[3]
+            current_seq_len = float(latent_h * latent_w)
+
+            base_mu = scheduler_config.base_shift
+            max_mu = scheduler_config.max_shift
+            base_len = float(scheduler_config.base_image_seq_len)
+            max_len = float(scheduler_config.max_image_seq_len)
+
+            current_mu = base_mu # Default to base_mu
+            if current_seq_len <= base_len:
+                current_mu = base_mu
+            elif current_seq_len >= max_len:
+                current_mu = max_mu
+            else:
+                if max_len > base_len: # Avoid division by zero
+                    ratio = (current_seq_len - base_len) / (max_len - base_len)
+                    current_mu = base_mu + ratio * (max_mu - base_mu)
+            
+            # Get base sigmas (these are unshifted if use_dynamic_shifting=True)
+            base_sigmas_t = get_sigmas(
+                self.noise_scheduler,
+                timesteps,
+                n_dim=latents.ndim,
+                dtype=latents.dtype,
+                device=latents.device
+            )
+
+            # Apply time_shift using torch operations
+            # The scheduler's time_shift is: math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma_exponent)
+            # sigma_exponent is 1.0 in the context of set_timesteps calling time_shift
+            sigma_exponent = 1.0
+            exp_current_mu = math.exp(current_mu)
+
+            # Clamp base_sigmas_t to avoid division by zero if it can be 0.
+            # Typically, sigmas are > 0.
+            # (1.0 / base_sigmas_t - 1.0) can be problematic if base_sigmas_t is 0 or 1.
+            # sigmas from FlowMatchEulerDiscreteScheduler are t / N, so min is 1/N, max is 1.
+            # If base_sigmas_t is 1, (1/1 - 1) = 0. 0^1 = 0. shifted_sigma = exp_mu / (exp_mu + 0) = 1.0.
+            # Ensure base_sigmas_t is not exactly zero, add a small epsilon if necessary for stability,
+            # though standard sigmas from this scheduler should be fine.
+            term_val = (1.0 / torch.clamp(base_sigmas_t, min=1e-6) - 1.0)
+            
+            # Handle cases where (1/t - 1) could be negative if t > 1, then .pow() might give complex numbers.
+            # Here, base_sigmas_t is <= 1, so (1/t - 1) >= 0.
+            denominator = exp_current_mu + term_val.pow(sigma_exponent)
+            sigmas = exp_current_mu / torch.clamp(denominator, min=1e-6) # Clamp denominator to avoid division by zero
+
+        else: # Original path if not use_dynamic_shifting
+            sigmas = get_sigmas(
+                self.noise_scheduler,
+                timesteps,
+                n_dim=latents.ndim,
+                dtype=latents.dtype,
+                device=latents.device
+            )
 
         noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
