@@ -196,7 +196,8 @@ class StableDiffusionModel(SupervisedFineTune):
 
         if advanced.get("zero_terminal_snr", False):
             apply_zero_terminal_snr(self.noise_scheduler)
-        cache_snr_values(self.noise_scheduler, self.target_device)
+        if self.noise_scheduler is DDPMScheduler:
+            cache_snr_values(self.noise_scheduler, self.target_device)
         
         self.model.diffusion_model.train()
         self.text_encoder_1.train()
