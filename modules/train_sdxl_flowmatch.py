@@ -150,9 +150,9 @@ class SupervisedFineTune(StableDiffusionModel):
             latent_h, latent_w = latents.shape[2], latents.shape[3]
             current_seq_len = latent_h * latent_w //16
 
-            base_mu = scheduler_config.get("base_shift", 0.5)
-            max_mu = scheduler_config.get("max_shift", 1.15)
-            base_len = scheduler_config.get("base_image_seq_len", 64)
+            base_mu = scheduler_config.get("base_shift", 1.75)
+            max_mu = scheduler_config.get("max_shift", 3)
+            base_len = scheduler_config.get("base_image_seq_len", 256)
             max_len = scheduler_config.get("max_image_seq_len", 4096)
             mu = get_lin_function(x1=base_len, y1=base_mu, x2=max_len, y2=max_mu)(current_seq_len)
 
@@ -229,7 +229,7 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
     return sigma
 
 def time_shift(mu: float, sigma: float, t: torch.Tensor):
-    return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
+    return mu / (mu + (1 / t - 1) ** sigma)
 
 def get_lin_function(
     x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
