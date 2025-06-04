@@ -133,58 +133,29 @@ class SupervisedFineTune(StableDiffusionModel):
         bsz = latents.shape[0]
         noise = torch.randn_like(latents, device=latents.device)
 
-        scheduler_device = self.noise_scheduler.timesteps.device
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=scheduler_device)
-        u = torch.nn.functional.sigmoid(u)
-        # Assuming num_train_timesteps is 1000 based on typical FlowMatch settings from config
-        # If num_train_timesteps can vary, ensure this factor is consistent with scheduler's init
-        indices = (u * self.noise_scheduler.config.num_train_timesteps).long()
-        # Clamp indices to be within the valid range of self.noise_scheduler.timesteps
-        indices = torch.clamp(indices, 0, len(self.noise_scheduler.timesteps) - 1)
+        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=self.target_device)
+        t = torch.nn.functional.sigmoid(u)
+        shift = advanced.get("flow_shift", 2.0)
 
-        timesteps = self.noise_scheduler.timesteps[indices]
-        timesteps = timesteps.to(device=latents.device)
-        
-        scheduler_config = self.noise_scheduler.config
-        if scheduler_config.use_dynamic_shifting:
+        if advanced.get("use_dynamic_shifting", False):
             latent_h, latent_w = latents.shape[2], latents.shape[3]
             current_seq_len = latent_h * latent_w //16
 
-            base_mu = scheduler_config.get("base_shift", 1.75)
-            max_mu = scheduler_config.get("max_shift", 3)
-            base_len = scheduler_config.get("base_image_seq_len", 256)
-            max_len = scheduler_config.get("max_image_seq_len", 4096)
+            base_mu = advanced.get("base_shift", 1.75)
+            max_mu = advanced.get("max_shift", 3)
+            base_len = advanced.get("base_image_seq_len", 256)
+            max_len = advanced.get("max_image_seq_len", 4096)
             mu = get_lin_function(x1=base_len, y1=base_mu, x2=max_len, y2=max_mu)(current_seq_len)
+            shift = mu
 
-            # Debug logging for the first 5 images
-            for i in range(min(5, latents.shape[0])):
-                logger.debug(
-                    f"Debug (use_dynamic_shifting) - Image {i}: "
-                    f"latent_h={latent_h}, latent_w={latent_w}, "
-                    f"current_seq_len={current_seq_len}, mu={mu}"
-                )
-            
-            sigmas = time_shift(mu, 1.0, u)
-            sigmas = sigmas.to(latents.device)
-            sigmas = sigmas.view(sigmas.size(0), *([1] * (len(latents.size()) - 1)))
-
-        else: # Original path if not use_dynamic_shifting
-            sigmas = get_sigmas(
-                self.noise_scheduler,
-                timesteps,
-                n_dim=latents.ndim,
-                dtype=latents.dtype,
-                device=latents.device
-            )
-
+        sigmas = (t * shift) / (1 + (shift - 1) * t)
+        timesteps = (sigmas * 1000.0)
+        sigmas = sigmas.view(-1, 1, 1, 1)
         noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
-
         target_v = noise - latents
-
-        # target = noise - latents # This is target_v
-        # MSE loss between predicted velocity and target velocity
         base_loss = torch.mean(((model_pred.float() - target_v.float()) ** 2).reshape(latents.shape[0], -1), 1)
+
 
         if hasattr(self, "tag_loss_module"):
             self.tag_loss_module.global_step = self.global_step
