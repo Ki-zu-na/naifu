@@ -155,6 +155,15 @@ class SupervisedFineTune(StableDiffusionModel):
             base_len = scheduler_config.get("base_image_seq_len", 64)
             max_len = scheduler_config.get("max_image_seq_len", 4096)
             mu = get_lin_function(x1=base_len, y1=base_mu, x2=max_len, y2=max_mu)(current_seq_len)
+
+            # Debug logging for the first 5 images
+            for i in range(min(5, latents.shape[0])):
+                logger.debug(
+                    f"Debug (use_dynamic_shifting) - Image {i}: "
+                    f"latent_h={latent_h}, latent_w={latent_w}, "
+                    f"current_seq_len={current_seq_len}, mu={mu}"
+                )
+            
             sigmas = time_shift(mu, 1.0, u)
             sigmas = sigmas.to(latents.device)
             sigmas = sigmas.view(sigmas.size(0), *([1] * (len(latents.size()) - 1)))
