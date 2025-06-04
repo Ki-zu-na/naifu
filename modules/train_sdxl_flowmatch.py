@@ -2,6 +2,7 @@ import safetensors
 import torch
 import os, math
 import lightning as pl
+from typing import Callable
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
@@ -147,51 +148,15 @@ class SupervisedFineTune(StableDiffusionModel):
         scheduler_config = self.noise_scheduler.config
         if scheduler_config.use_dynamic_shifting:
             latent_h, latent_w = latents.shape[2], latents.shape[3]
-            current_seq_len = float(latent_h * latent_w)
+            current_seq_len = latent_h * latent_w //16
 
             base_mu = scheduler_config.get("base_shift", 0.5)
             max_mu = scheduler_config.get("max_shift", 1.15)
-            base_len = float(scheduler_config.get("base_image_seq_len", 64))
-            max_len = float(scheduler_config.get("max_image_seq_len", 4096))
-
-            current_mu = base_mu # Default to base_mu
-            if current_seq_len <= base_len:
-                current_mu = base_mu
-            elif current_seq_len >= max_len:
-                current_mu = max_mu
-            else:
-                if max_len > base_len: # Avoid division by zero
-                    ratio = (current_seq_len - base_len) / (max_len - base_len)
-                    current_mu = base_mu + ratio * (max_mu - base_mu)
-            
-            # Get base sigmas (these are unshifted if use_dynamic_shifting=True)
-            base_sigmas_t = get_sigmas(
-                self.noise_scheduler,
-                timesteps,
-                n_dim=latents.ndim,
-                dtype=latents.dtype,
-                device=latents.device
-            )
-
-            # Apply time_shift using torch operations
-            # The scheduler's time_shift is: math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma_exponent)
-            # sigma_exponent is 1.0 in the context of set_timesteps calling time_shift
-            sigma_exponent = 1.0
-            exp_current_mu = math.exp(current_mu)
-
-            # Clamp base_sigmas_t to avoid division by zero if it can be 0.
-            # Typically, sigmas are > 0.
-            # (1.0 / base_sigmas_t - 1.0) can be problematic if base_sigmas_t is 0 or 1.
-            # sigmas from FlowMatchEulerDiscreteScheduler are t / N, so min is 1/N, max is 1.
-            # If base_sigmas_t is 1, (1/1 - 1) = 0. 0^1 = 0. shifted_sigma = exp_mu / (exp_mu + 0) = 1.0.
-            # Ensure base_sigmas_t is not exactly zero, add a small epsilon if necessary for stability,
-            # though standard sigmas from this scheduler should be fine.
-            term_val = (1.0 / torch.clamp(base_sigmas_t, min=1e-6) - 1.0)
-            
-            # Handle cases where (1/t - 1) could be negative if t > 1, then .pow() might give complex numbers.
-            # Here, base_sigmas_t is <= 1, so (1/t - 1) >= 0.
-            denominator = exp_current_mu + term_val.pow(sigma_exponent)
-            sigmas = exp_current_mu / torch.clamp(denominator, min=1e-6) # Clamp denominator to avoid division by zero
+            base_len = scheduler_config.get("base_image_seq_len", 64)
+            max_len = scheduler_config.get("max_image_seq_len", 4096)
+            mu = get_lin_function(x1=base_len, y1=base_mu, x2=max_len, y2=max_mu)(current_seq_len)
+            sigmas = time_shift(mu, 1.0, u)
+            sigmas = sigmas.view(sigmas.size(0), *([1] * (len(latents.size()) - 1)))
 
         else: # Original path if not use_dynamic_shifting
             sigmas = get_sigmas(
@@ -252,3 +217,13 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
     while len(sigma.shape) < n_dim:
         sigma = sigma.unsqueeze(-1)
     return sigma
+
+def time_shift(self, mu: float, sigma: float, t: torch.Tensor):
+    return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
+
+def get_lin_function(
+    x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
+) -> Callable[[float], float]:
+    m = (y2 - y1) / (x2 - x1)
+    b = y1 - m * x1
+    return lambda x: m * x + b
