@@ -156,6 +156,7 @@ class SupervisedFineTune(StableDiffusionModel):
             max_len = scheduler_config.get("max_image_seq_len", 4096)
             mu = get_lin_function(x1=base_len, y1=base_mu, x2=max_len, y2=max_mu)(current_seq_len)
             sigmas = time_shift(mu, 1.0, u)
+            sigmas = sigmas.to(latents.device)
             sigmas = sigmas.view(sigmas.size(0), *([1] * (len(latents.size()) - 1)))
 
         else: # Original path if not use_dynamic_shifting
@@ -218,7 +219,7 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
         sigma = sigma.unsqueeze(-1)
     return sigma
 
-def time_shift(self, mu: float, sigma: float, t: torch.Tensor):
+def time_shift(mu: float, sigma: float, t: torch.Tensor):
     return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
 def get_lin_function(
