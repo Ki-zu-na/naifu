@@ -158,17 +158,38 @@ class SupervisedFineTune(StableDiffusionModel):
         jvp_fn = lambda _xt, _t: self.model(_xt.to(model_dtype), _t.squeeze() * 1000, cond)
         # 注意: _t.squeeze() * 1000 是为了模拟你之前的 timesteps 输入，你可能需要根据你的模型调整
 
-        # 核心概念3: 计算雅可比向量积 (JVP)
-        # u: 模型的直接输出，即 u = model(xt, t, cond)
-        # dudt: JVP 的结果。它代表了模型输出 u 沿着流线路径的变化率。
-        #       数学上, dudt = (∂u/∂xt)·vt + (∂u/∂t)·1
-        #       通俗讲，如果模型已经完美学会了向量场，那么它的预测 u 应该等于 vt，
-        #       并且不随时间和位置变化，所以 dudt 的理想值是 0。
-        u, dudt = torch.func.jvp(
-            jvp_fn,
-            (xt, t),
-            (vt, torch.ones_like(t)) # 分别是 xt 和 t 方向上的 "扰动" 向量
-        )
+        # --------- 替换 torch.func.jvp 的实现 ----------
+        def jvp_backward(fn: Callable, xt: torch.Tensor, t: torch.Tensor,
+                         vt: torch.Tensor):
+            """
+            用两次 backward 实现 JVP:
+                1) g_xt  = ∂u / ∂xt
+                   g_t   = ∂u / ∂t
+                2) dudt  = (g_xt * vt).sum(dim=[1,2,3]) + g_t.squeeze()
+            返回:
+                u     : 模型前向输出
+                dudt  : JVP 结果
+            """
+            xt = xt.detach().requires_grad_(True)
+            t  = t.detach().requires_grad_(True)
+
+            # 1. 前向
+            u = fn(xt, t)
+
+            # 2. 一阶梯度
+            g_xt, g_t = torch.autograd.grad(
+                outputs=u,
+                inputs=(xt, t),
+                grad_outputs=torch.ones_like(u),
+                create_graph=True
+            )
+
+            # 3. 计算 JVP
+            dudt = (g_xt * vt).flatten(1).sum(-1) + g_t.squeeze()
+            return u, dudt
+
+        # ---------- 在 forward 里使用 ----------
+        u, dudt = jvp_backward(jvp_fn, xt, t, vt)
 
         u = u.float()
         dudt = dudt.float()
