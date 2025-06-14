@@ -10,7 +10,7 @@ from common.utils import (
     EmptyInitWrapper,
 )
 from common.logging import logger
-from modules.train_sdxl_meanflow import SupervisedFineTune
+from modules.train_sdxl_flowmatch import SupervisedFineTune
 from modules.sdxl_utils import (
     get_hidden_states_sdxl,
     convert_sdxl_text_encoder_2_checkpoint,
