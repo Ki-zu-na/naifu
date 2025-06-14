@@ -47,7 +47,7 @@ def checkpoint(func, inputs, enabled=True):
                 return func(*inputs)
 
             return custom_forward
-        return torch.utils.checkpoint.checkpoint(create_custom_forward(func), *inputs, use_reentrant=True)
+        return torch.utils.checkpoint.checkpoint(create_custom_forward(func), *inputs, use_reentrant=False)
         # return CheckpointFunction.apply(func, len(inputs), *args)
     else:
         return func(*inputs)
