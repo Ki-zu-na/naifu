@@ -25,7 +25,7 @@ def setup(fabric: pl.Fabric, config: OmegaConf):
     """与现有脚本保持一致的 setup 接口。"""
     model_path = config.trainer.model_path
 
-    model = ReflowFineTune(
+    model = SupervisedFineTune(
         model_path=model_path,
         config=config,
         device=fabric.device,
