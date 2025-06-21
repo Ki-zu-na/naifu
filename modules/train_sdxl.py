@@ -104,7 +104,9 @@ def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
 class SupervisedFineTune(StableDiffusionModel):    
     def __init__(self, model_path, config, device):
         super().__init__(model_path, config, device)
-        
+        self.init_tag_loss_module()
+
+    def init_tag_loss_module(self):
         # 初始化tag loss模块
         if self.config.advanced.get("use_tag_loss", False):
             from modules.losses.tag_loss import TagLossModule
