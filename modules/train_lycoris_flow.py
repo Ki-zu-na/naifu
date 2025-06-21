@@ -229,16 +229,24 @@ class StableDiffusionModel(SupervisedFineTune):
         lycoris_mapping["te1"] = self.lycoris_te1
         lycoris_mapping["te2"] = self.lycoris_te2
 
-        self.lycoris_unet.to(self.target_device).apply_to()
+        dtype_map = {
+            "bf16-true": torch.bfloat16,
+            "bf16-mixed": torch.bfloat16,
+            "16-true": torch.float16,
+            "16-mixed": torch.float16,
+        }
+        dtype = dtype_map.get(self.config.lightning.precision, torch.float32)
+
+        self.lycoris_unet.to(dtype=dtype)
+        self.lycoris_te1.to(dtype=dtype)
+        self.lycoris_te2.to(dtype=dtype)
+        self.text_encoder_1.to(dtype=dtype)
+        self.text_encoder_2.to(dtype=dtype)
+
         self.lycoris_unet.requires_grad_(True)
-
-        if self.config.advanced.get("train_text_encoder_1"):
-            self.lycoris_te1.to(self.target_device).apply_to()
-            self.lycoris_te1.requires_grad_(True)
-
-        if self.config.advanced.get("train_text_encoder_2"):
-            self.lycoris_te2.to(self.target_device).apply_to()
-            self.lycoris_te2.requires_grad_(True)
+        self.lycoris_te1.requires_grad_(True)
+        self.lycoris_te2.requires_grad_(True)
+        
             
         self.text_encoder_1.text_model.embeddings.requires_grad_(True)
         self.text_encoder_2.text_model.embeddings.requires_grad_(True) 

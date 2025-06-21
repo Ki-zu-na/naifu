@@ -186,6 +186,9 @@ class StableDiffusionModel(SupervisedFineTune):
             num_train_timesteps=1000,
             clip_sample=False,
         )
+        if self.config.get("noise_scheduler"):
+            scheduler_cls = get_class(self.config.noise_scheduler.name)
+            self.noise_scheduler = scheduler_cls(**self.config.noise_scheduler.params)
         self.batch_size = self.config.trainer.batch_size
         self.vae_encode_bsz = self.config.get("vae_encode_batch_size", self.batch_size)
         if self.vae_encode_bsz < 0:
@@ -193,12 +196,14 @@ class StableDiffusionModel(SupervisedFineTune):
 
         if advanced.get("zero_terminal_snr", False):
             apply_zero_terminal_snr(self.noise_scheduler)
-        cache_snr_values(self.noise_scheduler, self.target_device)
+        if self.noise_scheduler is DDPMScheduler:
+            cache_snr_values(self.noise_scheduler, self.target_device)
         
         self.model.diffusion_model.train()
         self.text_encoder_1.train()
         self.text_encoder_2.train()
         self.init_lycoris()
+        self.init_tag_loss_module()
 
     def init_lycoris(self):
         cfg = self.config
@@ -242,6 +247,7 @@ class StableDiffusionModel(SupervisedFineTune):
         self.lycoris_te1.requires_grad_(True)
         self.lycoris_te2.requires_grad_(True)
         
+            
         self.text_encoder_1.text_model.embeddings.requires_grad_(True)
         self.text_encoder_2.text_model.embeddings.requires_grad_(True) 
         
