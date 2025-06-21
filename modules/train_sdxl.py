@@ -209,10 +209,24 @@ class SupervisedFineTune(StableDiffusionModel):
             loss_weights = 1.0 # 默认权重为 1.0
 
         if advanced.get("min_snr", False):
-            base_loss = apply_snr_weight(base_loss, timesteps, self.noise_scheduler, advanced.min_snr_val, is_v)
-            snr_t = torch.minimum(torch.stack([self.noise_scheduler.all_snr[t] for t in timesteps]), torch.tensor(1000.0))
-            weight_snr = 1 / torch.sqrt(snr_t)
-            loss_weights = loss_weights * weight_snr # 结合 tag loss 和 snr 权重
+            # 第一阶段：官方 min-SNR re-weight
+            base_loss = apply_snr_weight(
+                base_loss, timesteps, self.noise_scheduler,
+                advanced.min_snr_val, is_v
+            )
+
+            # 第二阶段：自定义权重，按目标类型区分
+            snr_t = torch.stack(
+                [self.noise_scheduler.all_snr[t] for t in timesteps]
+            )
+            eps = 1e-8                              # 避免除零
+            if is_v:                                # v-prediction
+                weight_snr = torch.sqrt(snr_t / (snr_t + 1.0 + eps))
+            else:                                   # epsilon-prediction
+                weight_snr = 1.0 / torch.sqrt(snr_t + eps)
+
+            weight_snr = torch.clamp(weight_snr, max=10.0)  # 防爆
+            loss_weights = loss_weights * weight_snr
 
         loss = (base_loss * loss_weights).mean()
 
