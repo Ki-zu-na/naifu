@@ -237,20 +237,20 @@ class StableDiffusionModel(SupervisedFineTune):
         }
         dtype = dtype_map.get(self.config.lightning.precision, torch.float32)
 
-        self.lycoris_unet.to(dtype=dtype)
-        self.lycoris_te1.to(dtype=dtype)
-        self.lycoris_te2.to(dtype=dtype)
-        self.text_encoder_1.to(dtype=dtype)
-        self.text_encoder_2.to(dtype=dtype)
+        self.text_encoder_1.to(dtype=dtype, device=self.target_device)
+        self.text_encoder_2.to(dtype=dtype, device=self.target_device)
 
+        self.lycoris_unet.to(dtype=dtype).to(self.target_device).apply_to()
         self.lycoris_unet.requires_grad_(True)
-        self.lycoris_te1.requires_grad_(True)
-        self.lycoris_te2.requires_grad_(True)
-        
-            
-        self.text_encoder_1.text_model.embeddings.requires_grad_(True)
-        self.text_encoder_2.text_model.embeddings.requires_grad_(True) 
-        
+
+        if self.config.advanced.get("train_text_encoder_1", True):
+            self.lycoris_te1.to(dtype=dtype).to(self.target_device).apply_to()
+            self.lycoris_te1.requires_grad_(True)
+
+        if self.config.advanced.get("train_text_encoder_2", True):
+            self.lycoris_te2.to(dtype=dtype).to(self.target_device).apply_to()
+            self.lycoris_te2.requires_grad_(True)
+
     def get_module(self):
         return self.lycoris_unet       
 
