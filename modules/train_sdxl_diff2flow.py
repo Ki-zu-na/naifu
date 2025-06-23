@@ -304,9 +304,17 @@ def get_vector_field_from_v(v_pred, xt_dm, t_dm, scheduler):
     这等同于你之前的实现，只是封装成了一个函数。
     """
     device = v_pred.device
+    num_train_timesteps = scheduler.config.num_train_timesteps
+    
+    # --- 关键修改：在这里 clamp 索引 ---
+    # 确保 t_dm 在 [0, 999] 的范围内
+    t_dm_clamped = torch.clamp(t_dm, 0.0, num_train_timesteps - 1.0)
+    
+    # 使用 clamp 后的 t_dm 进行索引
+    indices = t_dm_clamped.long()
     alphas_cumprod_device = scheduler.alphas_cumprod.to(device)
-    alpha_t = alphas_cumprod_device[t_dm.long()].sqrt().view(-1, 1, 1, 1)
-    sigma_t = (1.0 - alphas_cumprod_device[t_dm.long()]).sqrt().view(-1, 1, 1, 1)
+    alpha_t = alphas_cumprod_device[indices].sqrt().view(-1, 1, 1, 1)
+    sigma_t = (1.0 - alphas_cumprod_device[indices]).sqrt().view(-1, 1, 1, 1)
 
     # eps_pred = alpha_t * v_pred + sigma_t * xt_dm
     # z_pred   = alpha_t * xt_dm - sigma_t * v_pred
