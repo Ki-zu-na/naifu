@@ -303,8 +303,10 @@ def get_vector_field_from_v(v_pred, xt_dm, t_dm, scheduler):
     从模型的 v-prediction 输出计算 FM 的速度场。
     这等同于你之前的实现，只是封装成了一个函数。
     """
-    alpha_t = scheduler.alphas_cumprod[t_dm.long()].sqrt().view(-1, 1, 1, 1)
-    sigma_t = (1.0 - scheduler.alphas_cumprod[t_dm.long()]).sqrt().view(-1, 1, 1, 1)
+    device = v_pred.device
+    alphas_cumprod_device = scheduler.alphas_cumprod.to(device)
+    alpha_t = alphas_cumprod_device[t_dm.long()].sqrt().view(-1, 1, 1, 1)
+    sigma_t = (1.0 - alphas_cumprod_device[t_dm.long()]).sqrt().view(-1, 1, 1, 1)
 
     # eps_pred = alpha_t * v_pred + sigma_t * xt_dm
     # z_pred   = alpha_t * xt_dm - sigma_t * v_pred
