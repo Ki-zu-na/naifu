@@ -239,12 +239,13 @@ def convert_fm_t_to_dm_t(t_fm, fm_t_map, num_train_timesteps):
     将一批 FM 连续时间 t_fm [0,1] 转换为 DM 连续时间 t_dm。
     这是论文 Eq. (12) 的逆向查找和插值过程。
     """
-    t_fm = t_fm.cpu()
-    # 官方代码的 t_fm 映射是递减的，所以我们翻转它和查找的值
+    orig_device = t_fm.device          # 1⃣️ 记录原始 device
+    t_cpu = t_fm.cpu()                 # 2⃣️ 放到 CPU 做 searchsorted
+
     reversed_map = torch.flip(fm_t_map, [0])
     
     # searchsorted 找到右侧索引
-    right_indices = torch.searchsorted(reversed_map, 1.0 - t_fm, right=True)
+    right_indices = torch.searchsorted(reversed_map, 1.0 - t_cpu, right=True)
     left_indices = right_indices - 1
     
     # 处理边界情况
@@ -255,14 +256,14 @@ def convert_fm_t_to_dm_t(t_fm, fm_t_map, num_train_timesteps):
     left_values = reversed_map[left_indices]
 
     # 线性插值
-    interp_weights = (1.0 - t_fm - left_values) / (right_values - left_values)
+    interp_weights = (1.0 - t_cpu - left_values) / (right_values - left_values)
     interp_weights = torch.nan_to_num(interp_weights, 0.0)
     
     dm_t_reversed = left_indices.float() + interp_weights * (right_indices.float() - left_indices.float())
 
     # 将反向的 t_dm (0->1000) 转换回正向的 t_dm (1000->0)
     dm_t = num_train_timesteps - 1 - dm_t_reversed
-    return dm_t.to(t_fm.device)
+    return dm_t.to(orig_device)   
 
 
 def convert_fm_xt_to_dm_xt(xt_fm, t_fm, scheduler, fm_t_map):
