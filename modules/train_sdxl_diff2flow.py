@@ -105,8 +105,7 @@ class SupervisedFineTune(StableDiffusionModel):
             clip_sample=False, # Diff2Flow 通常不裁剪
         )
         self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.target_device)
-        if not hasattr(self, 'fm_t_map'):
-            self.fm_t_map = get_fm_t_to_dm_t_map(self.noise_scheduler)
+
         logger.info("DDPMScheduler for Diff2Flow initialized.")
     def init_tag_loss_module(self):
         # 初始化tag loss模块
@@ -139,7 +138,9 @@ class SupervisedFineTune(StableDiffusionModel):
         cond = self.encode_batch(batch)
         model_dtype = next(self.model.parameters()).dtype
         cond = {k: v.to(model_dtype) for k, v in cond.items()}
-
+        
+        if not hasattr(self, 'fm_t_map'):
+            self.fm_t_map = get_fm_t_to_dm_t_map(self.noise_scheduler)
         # --- 训练循环开始 ---
         bsz = latents.shape[0]
         device = latents.device
