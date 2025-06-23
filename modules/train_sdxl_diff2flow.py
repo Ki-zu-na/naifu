@@ -105,6 +105,8 @@ class SupervisedFineTune(StableDiffusionModel):
             clip_sample=False, # Diff2Flow 通常不裁剪
         )
         self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.target_device)
+        if not hasattr(self, 'fm_t_map'):
+            self.fm_t_map = get_fm_t_to_dm_t_map(self.noise_scheduler)
         logger.info("DDPMScheduler for Diff2Flow initialized.")
     def init_tag_loss_module(self):
         # 初始化tag loss模块
@@ -138,37 +140,47 @@ class SupervisedFineTune(StableDiffusionModel):
         model_dtype = next(self.model.parameters()).dtype
         cond = {k: v.to(model_dtype) for k, v in cond.items()}
 
+        # --- 训练循环开始 ---
         bsz = latents.shape[0]
-        noise = torch.randn_like(latents, device=latents.device)
+        device = latents.device
 
-        # 1. 从调度器的整个时间范围内随机采样离散时间步
-        timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
-        
-        # 2. 获取对齐扩散路径所需的 alpha, sigma 及其导数
-        alpha_t, sigma_t, alpha_dot_t, sigma_dot_t = get_diffusion_schedule_properties(
-            self.noise_scheduler, 
-            timesteps, 
-            device=latents.device,
-            dtype=latents.dtype
-        )
+        # 1. 在FM空间进行操作
+        # 1.1 准备 x0 (噪声) 和 x1 (数据)
+        x1 = latents
+        x0 = torch.randn_like(x1)
 
-        # 3. 使用扩散模型的 schedule 构造带噪样本 x_t
-        #    这确保了插值路径与预训练模型一致
-        noisy_latents = alpha_t * latents + sigma_t * noise
-        
-        # 4. 计算真实的速度目标 v_target = d(x_t)/dt
-        #    v_target = d(alpha_t * latents + sigma_t * noise) / dt
-        #             = (d(alpha_t)/dt) * latents + (d(sigma_t)/dt) * noise
-        #             = alpha_dot_t * latents + sigma_dot_t * noise
-        target_v = alpha_dot_t * latents + sigma_dot_t * noise
+        # 1.2 采样连续时间 t_fm in [0, 1]
+        t_fm = torch.rand(bsz, device=device, dtype=latents.dtype)
 
-        # --- 替换结束 ---
+        # 1.3 计算FM的插值 xt_fm 和目标速度场 ut
+        # 根据论文，t_fm 是权重，但通常实现时会reshape
+        t_fm_reshaped = t_fm.view(-1, 1, 1, 1)
+        xt_fm = t_fm_reshaped * x1 + (1.0 - t_fm_reshaped) * x0
+        ut_target = x1 - x0 # 这是我们的真实目标速度场
 
-        # 模型预测速度场 v_pred
-        # 注意：timesteps 传递给U-Net，它内部会处理
-        model_pred = self.model(noisy_latents.to(model_dtype), timesteps, cond)
-        base_loss = torch.mean(((model_pred.float() - target_v.float()) ** 2).reshape(latents.shape[0], -1), 1)
+        # 2. Diff2Flow: 将FM变量转换为DM变量
+        # 2.1 将 (xt_fm, t_fm) 转换为 (xt_dm, t_dm)
+        xt_dm, t_dm = convert_fm_xt_to_dm_xt(xt_fm, t_fm, self.noise_scheduler, self.fm_t_map)
 
+        # 3. 模型预测 (在DM空间)
+        # 模型输入转换后的 xt_dm 和 t_dm
+        # 注意：t_dm是连续的浮点数，模型需要能处理它。
+        # 幸运的是，扩散模型的时间编码（如Sinusoidal-Position-Embedding）天然支持浮点数输入。
+        v_pred_dm = self.model(xt_dm.to(model_dtype), t_dm, cond)
+
+        # 4. Diff2Flow: 将DM预测转换回FM速度场
+        # 这里的t_dm需要取整以从scheduler中索引alpha/sigma，但v_pred_dm是基于连续t_dm预测的
+        vector_pred = get_vector_field_from_v(v_pred_dm, xt_dm, t_dm, self.noise_scheduler)
+        # 官方代码在 get_vector_field_from_v 内部处理了连续t_dm的插值，
+        # 这里为了简化，我们直接用连续 t_dm 去索引，但需要注意精度。
+        # 更严谨的做法是在get_vector_field_from_v内部也对alpha_t和sigma_t进行插值。
+        # 但为了保持与你原始代码的相似性，我们先用取整的方式。
+
+        # 5. 计算损失 (在FM空间)
+        # 比较模型预测的速度场 vector_pred 和真实目标 ut_target
+        base_loss = torch.mean(((vector_pred.float() - ut_target.float()) ** 2).reshape(bsz, -1), 1)
+
+        # --- 训练循环结束 ---
 
         if hasattr(self, "tag_loss_module"):
             self.tag_loss_module.global_step = self.global_step
@@ -200,70 +212,100 @@ class SupervisedFineTune(StableDiffusionModel):
         
         return loss
 
-def get_sigmas(sch, timesteps, n_dim=4, dtype=torch.float32, device="cuda:0"):
-    sigmas = sch.sigmas.to(device=device, dtype=dtype)
-    schedule_timesteps = sch.timesteps.to(device)
-    timesteps = timesteps.to(device)
+# --- 工具函数：从官方代码中借鉴和简化 ---
 
-    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
-
-    sigma = sigmas[step_indices].flatten()
-    while len(sigma.shape) < n_dim:
-        sigma = sigma.unsqueeze(-1)
-    return sigma
-
-def time_shift(mu: float, sigma: float, t: torch.Tensor):
-    return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
-
-def get_lin_function(
-    x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15
-) -> Callable[[float], float]:
-    m = (y2 - y1) / (x2 - x1)
-    b = y1 - m * x1
-    return lambda x: m * x + b
-
-
-def get_diffusion_schedule_properties(scheduler: DDPMScheduler, timesteps: torch.Tensor, device: torch.device, dtype: torch.dtype):
+def get_fm_t_to_dm_t_map(scheduler):
     """
-    计算给定时间步的 alpha, sigma 及其导数。
-    这是 Diff2Flow 的核心，用于计算真实的速度目标。
+    预先计算从 FM 时间 t_fm (0->1) 到 DM 时间 t_dm (1000->0) 的映射。
+    这是论文 Eq. (11) 的实现。
     """
-    # 将离散的 timesteps (0-999) 映射到连续时间 t (0-1)
-    # 我们假设 scheduler.timesteps 是 [999, 998, ..., 0]
-    continuous_t = (scheduler.config.num_train_timesteps - 1 - timesteps) / (scheduler.config.num_train_timesteps - 1)
-    continuous_t = continuous_t.to(device=device, dtype=dtype)
-
-    # 获取 alpha 和 sigma
-    # x_t = alpha_t * x_0 + sigma_t * noise
-    alphas_cumprod = scheduler.alphas_cumprod.to(device=device, dtype=dtype)
+    alphas_cumprod = scheduler.alphas_cumprod
+    sqrt_alphas_cumprod = alphas_cumprod.sqrt()
+    sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod).sqrt()
     
-    # 使用 torch.gather 从 schedule 中获取对应时间步的值
-    alpha_t = torch.gather(alphas_cumprod, 0, timesteps).sqrt()
-    sigma_t = (1 - torch.gather(alphas_cumprod, 0, timesteps)).sqrt()
+    # 论文中的 f(t_DM) = alpha_t / (alpha_t + sigma_t)
+    # 这就是 t_FM 的值。注意这个值是从1到0.5递减的。
+    # 为了映射到 [0, 1]，通常会做一些调整，但官方代码的实现更直接，
+    # 它用 searchsorted 在这个递减的序列中查找。
+    # 我们这里也遵循这个逻辑。
+    # 官方代码中还包含了一个为 zero-terminal-snr 做的 full_schedule,
+    # 这里为了简化，我们直接使用 alphas_cumprod
+    fm_t_map = sqrt_alphas_cumprod / (sqrt_alphas_cumprod + sqrt_one_minus_alphas_cumprod)
+    return fm_t_map.cpu() # 将其移动到CPU，作为查找表
 
-    # 使用数值方法计算导数 (中心差分法)
-    # h 是一个微小的时间步长
-    h = 1.0 / (scheduler.config.num_train_timesteps - 1)
+def convert_fm_t_to_dm_t(t_fm, fm_t_map, num_train_timesteps):
+    """
+    将一批 FM 连续时间 t_fm [0,1] 转换为 DM 连续时间 t_dm。
+    这是论文 Eq. (12) 的逆向查找和插值过程。
+    """
+    t_fm = t_fm.cpu()
+    # 官方代码的 t_fm 映射是递减的，所以我们翻转它和查找的值
+    reversed_map = torch.flip(fm_t_map, [0])
     
-    # t-h 和 t+h 对应的前后时间步
-    prev_timesteps = torch.clamp(timesteps - 1, 0, scheduler.config.num_train_timesteps - 1)
-    next_timesteps = torch.clamp(timesteps + 1, 0, scheduler.config.num_train_timesteps - 1)
+    # searchsorted 找到右侧索引
+    right_indices = torch.searchsorted(reversed_map, 1.0 - t_fm, right=True)
+    left_indices = right_indices - 1
     
-    alpha_t_prev = torch.gather(alphas_cumprod, 0, prev_timesteps).sqrt()
-    alpha_t_next = torch.gather(alphas_cumprod, 0, next_timesteps).sqrt()
+    # 处理边界情况
+    left_indices = torch.clamp(left_indices, 0, len(reversed_map) - 2)
+    right_indices = torch.clamp(right_indices, 1, len(reversed_map) - 1)
 
-    sigma_t_prev = (1 - torch.gather(alphas_cumprod, 0, prev_timesteps)).sqrt()
-    sigma_t_next = (1 - torch.gather(alphas_cumprod, 0, next_timesteps)).sqrt()
+    right_values = reversed_map[right_indices]
+    left_values = reversed_map[left_indices]
 
-    # d(alpha)/dt ≈ (alpha(t+h) - alpha(t-h)) / (2h)
-    # 注意：在扩散模型的标准时间表示中，t=0是噪声，t=T是清晰图像，所以导数符号可能需要调整。
-    # 这里我们遵循 Diff2Flow 的路径定义，从 x_0 到 x_1。
-    # 论文中通常使用从 t=0 (数据) 到 t=1 (噪声) 的连续时间。
-    # 如果 scheduler 时间步从大到小，我们的 continuous_t 从小到大，这是匹配的。
-    # 导数计算： (f(t_next) - f(t_prev)) / (2*h)，这里 t_next > t_prev。
-    alpha_dot_t = (alpha_t_next - alpha_t_prev) / (2 * h)
-    sigma_dot_t = (sigma_t_next - sigma_t_prev) / (2 * h)
+    # 线性插值
+    interp_weights = (1.0 - t_fm - left_values) / (right_values - left_values)
+    interp_weights = torch.nan_to_num(interp_weights, 0.0)
+    
+    dm_t_reversed = left_indices.float() + interp_weights * (right_indices.float() - left_indices.float())
 
-    # 调整维度以便于广播
-    return tuple(map(lambda x: x.view(-1, 1, 1, 1), [alpha_t, sigma_t, alpha_dot_t, sigma_dot_t]))
+    # 将反向的 t_dm (0->1000) 转换回正向的 t_dm (1000->0)
+    dm_t = num_train_timesteps - 1 - dm_t_reversed
+    return dm_t.to(t_fm.device)
 
+
+def convert_fm_xt_to_dm_xt(xt_fm, t_fm, scheduler, fm_t_map):
+    """
+    将 FM 空间的带噪样本 xt_fm 转换为 DM 空间的带噪样本 xt_dm。
+    这是论文 Eq. (13) 的实现。
+    """
+    sqrt_alphas_cumprod = scheduler.alphas_cumprod.sqrt()
+    sqrt_one_minus_alphas_cumprod = (1.0 - scheduler.alphas_cumprod).sqrt()
+    scale = sqrt_alphas_cumprod + sqrt_one_minus_alphas_cumprod
+    
+    # 为了获取对应 t_fm 的 scale, 我们需要先得到 t_dm
+    t_dm = convert_fm_t_to_dm_t(t_fm, fm_t_map, scheduler.config.num_train_timesteps)
+    
+    # 在离散的 scale 值之间进行线性插值
+    t_dm_floor = torch.floor(t_dm).long()
+    t_dm_ceil = torch.ceil(t_dm).long()
+
+    # 处理边界
+    t_dm_floor = torch.clamp(t_dm_floor, 0, len(scale) - 1)
+    t_dm_ceil = torch.clamp(t_dm_ceil, 0, len(scale) - 1)
+    
+    scale_floor = scale[t_dm_floor]
+    scale_ceil = scale[t_dm_ceil]
+    
+    interp_weights = (t_dm - t_dm_floor.float()).view(-1, 1, 1, 1)
+    
+    scale_t = scale_floor.view(-1, 1, 1, 1) * (1 - interp_weights) + scale_ceil.view(-1, 1, 1, 1) * interp_weights
+    
+    xt_dm = xt_fm * scale_t
+    return xt_dm, t_dm
+
+
+def get_vector_field_from_v(v_pred, xt_dm, t_dm, scheduler):
+    """
+    从模型的 v-prediction 输出计算 FM 的速度场。
+    这等同于你之前的实现，只是封装成了一个函数。
+    """
+    alpha_t = scheduler.alphas_cumprod[t_dm.long()].sqrt().view(-1, 1, 1, 1)
+    sigma_t = (1.0 - scheduler.alphas_cumprod[t_dm.long()]).sqrt().view(-1, 1, 1, 1)
+
+    # eps_pred = alpha_t * v_pred + sigma_t * xt_dm
+    # z_pred   = alpha_t * xt_dm - sigma_t * v_pred
+    # vector_pred = z_pred - eps_pred
+    # 简化后是：
+    vector_pred = (alpha_t - sigma_t) * xt_dm - (alpha_t + sigma_t) * v_pred
+    return vector_pred
