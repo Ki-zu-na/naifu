@@ -271,8 +271,9 @@ def convert_fm_xt_to_dm_xt(xt_fm, t_fm, scheduler, fm_t_map):
     将 FM 空间的带噪样本 xt_fm 转换为 DM 空间的带噪样本 xt_dm。
     这是论文 Eq. (13) 的实现。
     """
-    sqrt_alphas_cumprod = scheduler.alphas_cumprod.sqrt()
-    sqrt_one_minus_alphas_cumprod = (1.0 - scheduler.alphas_cumprod).sqrt()
+    device = xt_fm.device
+    sqrt_alphas_cumprod = scheduler.alphas_cumprod.to(device).sqrt()
+    sqrt_one_minus_alphas_cumprod = (1.0 - scheduler.alphas_cumprod.to(device)).sqrt()
     scale = sqrt_alphas_cumprod + sqrt_one_minus_alphas_cumprod
     
     # 为了获取对应 t_fm 的 scale, 我们需要先得到 t_dm
