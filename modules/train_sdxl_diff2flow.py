@@ -239,13 +239,17 @@ def convert_fm_t_to_dm_t(t_fm, fm_t_map, num_train_timesteps):
     将一批 FM 连续时间 t_fm [0,1] 转换为 DM 连续时间 t_dm。
     这是论文 Eq. (12) 的逆向查找和插值过程。
     """
-    orig_device = t_fm.device          # 1⃣️ 记录原始 device
-    t_cpu = t_fm.cpu()                 # 2⃣️ 放到 CPU 做 searchsorted
+    orig_device = t_fm.device
+    t_cpu = t_fm.cpu()
 
+    # fm_t_map 是一个从 t_dm=0 到 t_dm=999 的递减序列
+    # 我们将其翻转，得到一个 t_dm 从 999->0 的递增序列
     reversed_map = torch.flip(fm_t_map, [0])
     
-    # searchsorted 找到右侧索引
-    right_indices = torch.searchsorted(reversed_map, 1.0 - t_cpu, right=True)
+    # 在这个递增序列中查找 t_fm 的位置
+    # searchsorted 要求被搜索的张量（reversed_map）是单调不减的
+    # t_cpu 也是单调不减的，所以可以直接搜索
+    right_indices = torch.searchsorted(reversed_map, t_cpu, right=True)
     left_indices = right_indices - 1
     
     # 处理边界情况
@@ -256,14 +260,15 @@ def convert_fm_t_to_dm_t(t_fm, fm_t_map, num_train_timesteps):
     left_values = reversed_map[left_indices]
 
     # 线性插值
-    interp_weights = (1.0 - t_cpu - left_values) / (right_values - left_values)
-    interp_weights = torch.nan_to_num(interp_weights, 0.0)
+    interp_weights = (t_cpu - left_values) / (right_values - left_values)
+    interp_weights = torch.nan_to_num(interp_weights, 0.0) # 防止除以0
     
+    # 得到的 dm_t_reversed 是 t_dm 从 999->0 的连续浮点数索引
     dm_t_reversed = left_indices.float() + interp_weights * (right_indices.float() - left_indices.float())
 
-    # 将反向的 t_dm (0->1000) 转换回正向的 t_dm (1000->0)
-    dm_t = num_train_timesteps - 1 - dm_t_reversed
-    return dm_t.to(orig_device)   
+    # 将反向的 t_dm (0->999) 转换回正向的 t_dm (999->0)
+    dm_t = (num_train_timesteps - 1) - dm_t_reversed
+    return dm_t.to(orig_device)
 
 
 def convert_fm_xt_to_dm_xt(xt_fm, t_fm, scheduler, fm_t_map):
