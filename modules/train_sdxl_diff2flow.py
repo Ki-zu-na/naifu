@@ -9,7 +9,7 @@ from common.logging import logger
 
 from diffusers import  DDPMScheduler
 from modules.sdxl_model import StableDiffusionModel
-from modules.scheduler_utils import apply_snr_weight
+from modules.scheduler_utils import apply_snr_weight,apply_zero_terminal_snr
 from lightning.pytorch.utilities.model_summary import ModelSummary
 
 
@@ -106,6 +106,8 @@ class SupervisedFineTune(StableDiffusionModel):
         )
         self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.target_device)
 
+        apply_zero_terminal_snr(self.noise_scheduler)
+        
         logger.info("DDPMScheduler for Diff2Flow initialized.")
     def init_tag_loss_module(self):
         # 初始化tag loss模块
