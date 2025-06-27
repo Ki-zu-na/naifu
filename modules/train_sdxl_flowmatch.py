@@ -156,7 +156,26 @@ class SupervisedFineTune(StableDiffusionModel):
         model_pred = self.model(noisy_latents.to(torch.bfloat16), timesteps, cond)
         target_v = noise - latents
         base_loss = torch.mean(((model_pred.float() - target_v.float()) ** 2).reshape(latents.shape[0], -1), 1)
-
+        
+        # --- Start of Min-SNR implementation ---
+        # Get gamma from config, e.g., 5.0
+        gamma = advanced.get("min_snr_val", 5.0) 
+        
+        # Calculate SNR from sigmas, add a small epsilon to avoid division by zero
+        # sigmas here is a 1D tensor of size [bsz] before being reshaped
+        snr = ((1.0 - sigmas)**2) / (sigmas**2 + 1e-9)
+        
+        # Calculate Min-SNR weights
+        min_snr = torch.minimum(snr, torch.full_like(snr, gamma))
+        
+        # For v-prediction, the paper suggests weighting by min_snr / (snr + 1)
+        # Since we are predicting `noise - latents`, which is related to `v`, we use this weighting.
+        if advanced.get("v_prediction_like_loss", True):
+             snr_weights = min_snr / (snr + 1)
+        else:
+             snr_weights = min_snr / snr
+        
+        # --- End of Min-SNR implementation ---
 
         if hasattr(self, "tag_loss_module"):
             self.tag_loss_module.global_step = self.global_step
@@ -178,9 +197,11 @@ class SupervisedFineTune(StableDiffusionModel):
                 self.log_dict(log_dict)
                 self.tag_loss_metrics = log_dict
 
-            loss = (base_loss * weights).mean()
+            # Combine snr_weights with tag_loss weights
+            final_weights = weights * snr_weights.detach()
+            loss = (base_loss * final_weights).mean()
         else:
-            loss = base_loss.mean()
+            loss = (base_loss * snr_weights).mean()
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             logger.error(f"Error: NaN or Inf loss encountered! Loss value: {loss.item()}")
