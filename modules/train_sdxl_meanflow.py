@@ -185,7 +185,7 @@ class SupervisedFineTune(StableDiffusionModel):
 
         # 超参数 alpha，用于平衡两个损失项的重要性
         # alpha 越大，对模型预测的稳定性要求越高
-        alpha = 0.15
+        alpha = advanced.get("meanflow_alpha", 0.2)
 
         # 最终损失
         final_loss = loss_direction + alpha * loss_stability
