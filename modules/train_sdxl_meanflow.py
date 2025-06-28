@@ -6,6 +6,7 @@ from typing import Callable
 from omegaconf import OmegaConf
 from common.utils import get_class, get_latest_checkpoint, load_torch_file
 from common.logging import logger
+from torch.autograd.functional import jvp
 
 from diffusers import  FlowMatchEulerDiscreteScheduler
 from modules.sdxl_model import StableDiffusionModel
@@ -158,41 +159,21 @@ class SupervisedFineTune(StableDiffusionModel):
         jvp_fn = lambda _xt, _t: self.model(_xt.to(model_dtype), _t.squeeze() * 1000, cond)
         # 注意: _t.squeeze() * 1000 是为了模拟你之前的 timesteps 输入，你可能需要根据你的模型调整
 
-        # --------- 替换 torch.func.jvp 的实现 ----------
-        def jvp_backward(fn: Callable, xt: torch.Tensor, t: torch.Tensor,
-                         vt: torch.Tensor):
-            """
-            用两次 backward 实现 JVP:
-                1) g_xt  = ∂u / ∂xt
-                   g_t   = ∂u / ∂t
-                2) dudt  = (g_xt * vt).sum(dim=[1,2,3]) + g_t.squeeze()
-            返回:
-                u     : 模型前向输出
-                dudt  : JVP 结果
-            """
-            xt = xt.detach().requires_grad_(True)
-            t  = t.detach().requires_grad_(True)
-
-            # 1. 前向
-            u = fn(xt, t)
-
-            # 2. 一阶梯度
-            g_xt, g_t = torch.autograd.grad(
-                outputs=u,
-                inputs=(xt, t),
-                grad_outputs=torch.ones_like(u),
-                create_graph=True
-            )
-
-            # 3. 计算 JVP
-            dudt = (g_xt * vt).flatten(1).sum(-1) + g_t.squeeze()
-            return u, dudt
-
-        # ---------- 在 forward 里使用 ----------
-        u, dudt = jvp_backward(jvp_fn, xt, t, vt)
-
-        u = u.float()
-        dudt = dudt.float()
+        # --------- 使用 torch.autograd.functional.jvp ----------
+        # jvp_fn 接收一个元组作为输入
+        wrapped_fn = lambda _xt, _t: jvp_fn(_xt, _t)
+        
+        # JVP 计算: create_graph=True 允许我们通过 JVP 的结果进行反向传播
+        # v 代表了输入 (xt, t) 的变化方向，对于 xt 是 vt，对于 t 则是 1
+        u, dudt = jvp(
+            wrapped_fn,
+            (xt, t),
+            v=(vt, torch.ones_like(t)),
+            create_graph=True
+        )
+        
+        u = u.to(model_dtype)
+        dudt = dudt.to(model_dtype)
 
         # --- 4. 定义新的损失函数 ---
         # 损失由两部分组成:
