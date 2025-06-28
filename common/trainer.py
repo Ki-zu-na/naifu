@@ -242,14 +242,22 @@ class Trainer:
                     return next(module.parameters()).device
                 except StopIteration:
                     return "N/A"
+            
+            def _get_dtype_safe(module):
+                """Return dtype of first parameter or 'N/A' if module has no parameters."""
+                try:
+                    return next(module.parameters()).dtype
+                except StopIteration:
+                    return "N/A"
+            
             if fabric.is_global_zero:
                 logger.info(f"Training on device: {target_device}")
                 if hasattr(self.model, 'model'):
-                    logger.info(f"Main model device: {_get_device_safe(self.model.model)}")
+                    logger.info(f"Main model device: {_get_device_safe(self.model.model)} | dtype: {_get_dtype_safe(self.model.model)}")
                 if hasattr(self.model, 'unet_ref'):
-                    logger.info(f"UNet ref device: {_get_device_safe(self.model.unet_ref)}")
+                    logger.info(f"UNet ref device: {_get_device_safe(self.model.unet_ref)} | dtype: {_get_dtype_safe(self.model.unet_ref)}")
                 if hasattr(self.model, 'lycoris_unet'):
-                    logger.info(f"LyCORIS UNet device: {_get_device_safe(self.model.lycoris_unet)}")
+                    logger.info(f"LyCORIS UNet device: {_get_device_safe(self.model.lycoris_unet)} | dtype: {_get_dtype_safe(self.model.lycoris_unet)}")
 
         log_device_info()
         # # load state if you used fabric.save
