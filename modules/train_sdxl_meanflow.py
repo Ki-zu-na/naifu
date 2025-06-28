@@ -156,7 +156,7 @@ class SupervisedFineTune(StableDiffusionModel):
 
         # 定义一个包装了模型的匿名函数，用于 JVP 计算
         # 它接收 xt 和 t 作为输入
-        jvp_fn = lambda _xt, _t: self.model(_xt.to(model_dtype), _t.squeeze() * 1000, cond)
+        jvp_fn = lambda _xt, _t: self.model(_xt.to(model_dtype), _t.view(-1) * 1000, cond)
         # 注意: _t.squeeze() * 1000 是为了模拟你之前的 timesteps 输入，你可能需要根据你的模型调整
 
         # --------- 使用 torch.autograd.functional.jvp ----------
