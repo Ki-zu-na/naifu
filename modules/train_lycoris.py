@@ -148,6 +148,8 @@ class StableDiffusionModel(SupervisedFineTune):
         elif self.config.lightning.precision == "bf16-true":
             #self.forward_context = fabric.autocast()
             self.model.to(torch.bfloat16)
+        elif self.config.lightning.precision == "fp8-base":
+            self.model.to(torch.float8_e4m3fn)
     
     def init_model(self):
         advanced = self.config.get("advanced", {})
@@ -234,6 +236,7 @@ class StableDiffusionModel(SupervisedFineTune):
             "bf16-mixed": torch.bfloat16,
             "16-true": torch.float16,
             "16-mixed": torch.float16,
+            "fp8-base": torch.bfloat16,
         }
         dtype = dtype_map.get(self.config.lightning.precision, torch.float32)
 
