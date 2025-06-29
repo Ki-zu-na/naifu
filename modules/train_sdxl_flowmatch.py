@@ -186,6 +186,7 @@ class SupervisedFineTune(StableDiffusionModel):
 
             if hasattr(self, "log_dict"):
                 log_dict = {
+                    "train/base_loss": base_loss.mean().item(),
                     "train/tag_loss_weight": weights.mean().item(),
                     "train/weighted_loss": (base_loss * weights).mean().item(),
                     "train/max_weight": weights.max().item(),
@@ -195,7 +196,7 @@ class SupervisedFineTune(StableDiffusionModel):
                                                     if self.tag_loss_module.check_fn(tag.strip()))
                 }
                 self.log_dict(log_dict)
-                self.tag_loss_metrics = log_dict
+                self.tag_loss_metrics = log_dict 
 
             # Combine snr_weights with tag_loss weights
             final_weights = weights * snr_weights.detach()

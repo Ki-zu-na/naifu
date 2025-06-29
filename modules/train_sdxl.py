@@ -204,7 +204,7 @@ class SupervisedFineTune(StableDiffusionModel):
                                                     if self.tag_loss_module.check_fn(tag.strip()))
                 }
                 self.log_dict(log_dict)
-                self.tag_loss_metrics = log_dict # 存储metrics供trainer使用
+                self.tag_loss_metrics = log_dict 
 
             loss_weights = weights # tag loss 的权重
         else:
